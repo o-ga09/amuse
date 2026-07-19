@@ -1,0 +1,17 @@
+<svg width="1200" height="340" viewBox="0 0 1200 340" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="amuse — Apple Music, from your terminal.">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FA243C"/>
+      <stop offset="100%" stop-color="#FC3B6E"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="340" rx="24" fill="#0d1117"/>
+  <text font-family="'SF Mono','JetBrains Mono',Consolas,monospace" font-size="34" font-weight="700" fill="url(#grad)" xml:space="preserve">
+    <tspan x="80" y="90">  ▄█████▄  ████▄██▄  ██    ██  ▄▄█████▄   ▄████▄</tspan>
+    <tspan x="80" y="126">  ▀ ▄▄▄██  ██ ██ ██  ██    ██  ██▄▄▄▄ ▀  ██▄▄▄▄██</tspan>
+    <tspan x="80" y="162"> ▄██▀▀▀██  ██ ██ ██  ██    ██   ▀▀▀▀██▄  ██▀▀▀▀▀▀</tspan>
+    <tspan x="80" y="198"> ██▄▄▄███  ██ ██ ██  ██▄▄▄███  █▄▄▄▄▄██  ▀██▄▄▄▄█</tspan>
+    <tspan x="80" y="234">  ▀▀▀▀ ▀▀  ▀▀ ▀▀ ▀▀   ▀▀▀▀ ▀▀   ▀▀▀▀▀▀     ▀▀▀▀▀</tspan>
+  </text>
+  <text x="80" y="290" font-family="'SF Mono','JetBrains Mono',Consolas,monospace" font-size="26" fill="#8b949e">♪ Apple Music, from your terminal.</text>
+</svg>

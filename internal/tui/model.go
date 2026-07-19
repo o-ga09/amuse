@@ -255,8 +255,10 @@ func doAction(action func(context.Context) error) tea.Cmd {
 	}
 }
 
-// Run starts the interactive TUI and blocks until the user quits.
+// Run prints the startup banner, then starts the interactive TUI and blocks
+// until the user quits.
 func Run(client *musicapp.Client) error {
+	fmt.Println(banner())
 	_, err := tea.NewProgram(New(client)).Run()
 	return err
 }
