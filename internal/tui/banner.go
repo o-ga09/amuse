@@ -2,12 +2,19 @@ package tui
 
 import "github.com/charmbracelet/lipgloss"
 
-var bannerStyle = lipgloss.NewStyle().
-	Border(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.Color("13")).
-	Padding(0, 2)
+// wordmark is figlet's "block" font rendering of "amuse", generated with
+// `figlet -f block amuse` and pasted in verbatim.
+const wordmark = `  _|_|_|  _|_|_|  _|_|    _|    _|    _|_|_|    _|_|
+_|    _|  _|    _|    _|  _|    _|  _|_|      _|_|_|_|
+_|    _|  _|    _|    _|  _|    _|      _|_|  _|
+  _|_|_|  _|    _|    _|    _|_|_|  _|_|_|      _|_|_|  `
 
-// banner renders the startup box shown once before the TUI takes over.
+var (
+	wordmarkStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
+	taglineStyle  = lipgloss.NewStyle().Faint(true)
+)
+
+// banner renders the startup wordmark shown once before the TUI takes over.
 func banner() string {
-	return bannerStyle.Render("♪ amuse\n\nApple Music, from your terminal.")
+	return wordmarkStyle.Render(wordmark) + "\n" + taglineStyle.Render("♪ Apple Music, from your terminal.")
 }

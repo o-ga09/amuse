@@ -1,12 +1,6 @@
-# amuse
-
-```
-╭────────────────────────────────────╮
-│  ♪ amuse                           │
-│                                    │
-│  Apple Music, from your terminal.  │
-╰────────────────────────────────────╯
-```
+<p align="center">
+  <img src="docs/banner.svg" alt="amuse — Apple Music, from your terminal." width="700">
+</p>
 
 `amuse` controls Apple Music (Music.app) from the terminal on macOS, via AppleScript.
 
