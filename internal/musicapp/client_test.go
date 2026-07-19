@@ -35,7 +35,7 @@ func TestClient_PlaybackActions(t *testing.T) {
 			r := &fakeRunner{}
 			c := NewClient(r)
 
-			if err := tt.call(c, context.Background()); err != nil {
+			if err := tt.call(c, t.Context()); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if !strings.Contains(r.script, tt.wantScript) {
@@ -48,7 +48,7 @@ func TestClient_PlaybackActions(t *testing.T) {
 			r := &fakeRunner{err: wantErr}
 			c := NewClient(r)
 
-			if err := tt.call(c, context.Background()); !errors.Is(err, wantErr) {
+			if err := tt.call(c, t.Context()); !errors.Is(err, wantErr) {
 				t.Errorf("err = %v, want %v", err, wantErr)
 			}
 		})
@@ -93,7 +93,7 @@ func TestClient_NowPlaying(t *testing.T) {
 			r := &fakeRunner{output: tt.output, err: tt.runnerErr}
 			c := NewClient(r)
 
-			got, err := c.NowPlaying(context.Background())
+			got, err := c.NowPlaying(t.Context())
 
 			switch {
 			case tt.wantErr != nil:
