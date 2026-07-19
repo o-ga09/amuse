@@ -11,6 +11,10 @@ are implemented. Library browsing, playlists, and search are not — Music.app's
 only exposes the local library, and querying/streaming Apple Music's full catalog would need the
 separate MusicKit API (not implemented here).
 
+> [!IMPORTANT]
+> macOS only. `amuse` controls Music.app via AppleScript (`osascript`), which doesn't exist on
+> Linux/Windows.
+
 ## Install
 
 ```sh
