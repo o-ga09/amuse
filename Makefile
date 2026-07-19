@@ -14,6 +14,6 @@ build:
 	go build -ldflags=$(BUILD_LDFLAGS) -trimpath -o amuse .
 
 lint:
-	go tool golangci-lint run ./...
+	golangci-lint run ./...
 
 .PHONY: default ci test build lint
