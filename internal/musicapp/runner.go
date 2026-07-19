@@ -19,6 +19,10 @@ type Runner interface {
 type OSARunner struct{}
 
 func (OSARunner) Run(ctx context.Context, script string) (string, error) {
+	// #nosec G204 -- script is passed as a single argv element, never through a
+	// shell, so it can't inject a separate command. Callers must not build
+	// `script` from unescaped external input (see .claude/rules/security-review.md);
+	// today every caller passes a package-local constant.
 	cmd := exec.CommandContext(ctx, "osascript", "-e", script)
 
 	var stdout, stderr bytes.Buffer
