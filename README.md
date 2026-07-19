@@ -1,5 +1,13 @@
 # amuse
 
+```
+╭────────────────────────────────────╮
+│  ♪ amuse                           │
+│                                    │
+│  Apple Music, from your terminal.  │
+╰────────────────────────────────────╯
+```
+
 `amuse` controls Apple Music (Music.app) from the terminal on macOS, via AppleScript.
 
 ## Status
