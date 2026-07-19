@@ -2,12 +2,14 @@ package tui
 
 import "github.com/charmbracelet/lipgloss"
 
-// wordmark is figlet's "block" font rendering of "amuse", generated with
-// `figlet -f block amuse` and pasted in verbatim.
-const wordmark = `  _|_|_|  _|_|_|  _|_|    _|    _|    _|_|_|    _|_|
-_|    _|  _|    _|    _|  _|    _|  _|_|      _|_|_|_|
-_|    _|  _|    _|    _|  _|    _|      _|_|  _|
-  _|_|_|  _|    _|    _|    _|_|_|  _|_|_|      _|_|_|  `
+// wordmark is toilet's "mono12" font rendering of "amuse" (solid Unicode
+// block glyphs, unlike figlet's thin "_"/"|" fonts), generated with
+// `toilet -f mono12 amuse` and pasted in verbatim.
+const wordmark = `  ▄█████▄  ████▄██▄  ██    ██  ▄▄█████▄   ▄████▄
+  ▀ ▄▄▄██  ██ ██ ██  ██    ██  ██▄▄▄▄ ▀  ██▄▄▄▄██
+ ▄██▀▀▀██  ██ ██ ██  ██    ██   ▀▀▀▀██▄  ██▀▀▀▀▀▀
+ ██▄▄▄███  ██ ██ ██  ██▄▄▄███  █▄▄▄▄▄██  ▀██▄▄▄▄█
+  ▀▀▀▀ ▀▀  ▀▀ ▀▀ ▀▀   ▀▀▀▀ ▀▀   ▀▀▀▀▀▀     ▀▀▀▀▀`
 
 var (
 	wordmarkStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
