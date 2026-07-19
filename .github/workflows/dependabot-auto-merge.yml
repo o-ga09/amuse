@@ -39,17 +39,17 @@ jobs:
           SEVEN_DAYS_AGO_EPOCH=$(date -u -d "7 days ago" +%s)
           NOW_EPOCH=$(date -u +%s)
 
-          # go.mod の差分から追加されたパッケージとバージョンを抽出
-          # 例: +	github.com/foo/bar v1.2.3
+          # Extract the package and version added in the go.mod diff.
+          # e.g. +	github.com/foo/bar v1.2.3
           while IFS=' ' read -r PKG VER; do
             [ -z "$PKG" ] || [ -z "$VER" ] && continue
             [[ "$VER" != v* ]] && VER="v${VER}"
 
             echo "Checking ${PKG}@${VER} ..."
 
-            # Go proxy API はローカル実行不要で同等の Time 情報を返すため直接利用する
-            # (go list -m -json も内部的に同 API を叩くが、pull_request_target で
-            # チェックアウト+コード実行を避けるためここでは curl で直接取得する)
+            # The Go proxy API returns the same release Time info as
+            # `go list -m -json` without needing a local checkout/build,
+            # so query it directly with curl here.
             INFO=$(curl -sf --max-time 10 "https://proxy.golang.org/${PKG}/@v/${VER}.info" || true)
 
             if [ -z "$INFO" ]; then
@@ -99,9 +99,9 @@ jobs:
           TOO_RECENT_PKG: ${{ steps.age-check.outputs.too_recent_pkg }}
         run: |
           gh pr close "${{ steps.pr.outputs.number }}" --repo "${{ github.repository }}" \
-            --comment "## 自動マージ対象外のためクローズ
+            --comment "## Closed: not eligible for auto-merge
 
-          **対象パッケージ:** \`${TOO_RECENT_PKG}\`
+          **Package:** \`${TOO_RECENT_PKG}\`
 
-          リリースから 7 日未満のバージョンはサプライチェーン攻撃のリスク低減のため自動マージしません。
-          7 日経過後に DependaBot が再度 PR を作成します。"
+          Versions released less than 7 days ago are not auto-merged, to reduce the risk of
+          supply-chain attacks. Dependabot will open a new PR once the version is 7+ days old."

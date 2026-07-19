@@ -10,11 +10,8 @@ jobs:
   job-lint:
     name: Lint
     runs-on: ubuntu-latest
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - name: Check out source code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -25,11 +22,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Run lint
-        uses: reviewdog/action-golangci-lint@c76cceaaab89abe74e649d2e34c6c9adc26662d2 # v2.10.0
-        with:
-          fail_level: error
-          go_version_file: go.mod
-          cache: false
+        run: make lint
 
   job-test:
     name: Test

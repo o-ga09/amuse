@@ -27,13 +27,15 @@ jobs:
       - name: Upload gosec SARIF
         uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
         if: always()
-        continue-on-error: true # fork PRではsecurity-events:writeが付与されないため
+        continue-on-error: true # fork PRs don't get security-events:write
         with:
           sarif_file: gosec.sarif
 
   govulncheck:
-    name: govulncheck (依存CVE)
+    name: govulncheck (dependency CVEs)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -41,10 +43,11 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
+      - name: Run govulncheck
+        run: go tool govulncheck ./...
 
   gitleaks:
-    name: Gitleaks (シークレット検出)
+    name: Gitleaks (secret scanning)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -53,6 +56,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Run gitleaks
+        run: go tool gitleaks detect --source . --no-banner --redact
