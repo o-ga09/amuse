@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -82,4 +83,87 @@ func (c *Client) NowPlaying(ctx context.Context) (*Track, error) {
 		Album:  fields[2],
 		State:  fields[3],
 	}, nil
+}
+
+// Shuffle reports whether shuffle is currently enabled.
+func (c *Client) Shuffle(ctx context.Context) (bool, error) {
+	out, err := c.runner.Run(ctx, `tell application "Music" to shuffle enabled`)
+	if err != nil {
+		return false, err
+	}
+	return out == "true", nil
+}
+
+func (c *Client) SetShuffle(ctx context.Context, enabled bool) error {
+	script := `tell application "Music" to set shuffle enabled to false`
+	if enabled {
+		script = `tell application "Music" to set shuffle enabled to true`
+	}
+	_, err := c.runner.Run(ctx, script)
+	return err
+}
+
+// RepeatMode is one of the fixed set of values Music.app's "song repeat"
+// property accepts.
+type RepeatMode string
+
+const (
+	RepeatOff RepeatMode = "off"
+	RepeatOne RepeatMode = "one"
+	RepeatAll RepeatMode = "all"
+)
+
+func (m RepeatMode) valid() bool {
+	switch m {
+	case RepeatOff, RepeatOne, RepeatAll:
+		return true
+	}
+	return false
+}
+
+// ErrInvalidRepeatMode is returned by SetRepeat for any mode outside off/one/all.
+var ErrInvalidRepeatMode = errors.New("invalid repeat mode")
+
+func (c *Client) Repeat(ctx context.Context) (RepeatMode, error) {
+	out, err := c.runner.Run(ctx, `tell application "Music" to song repeat`)
+	if err != nil {
+		return "", err
+	}
+	return RepeatMode(out), nil
+}
+
+func (c *Client) SetRepeat(ctx context.Context, mode RepeatMode) error {
+	if !mode.valid() {
+		return fmt.Errorf("%w: %q", ErrInvalidRepeatMode, mode)
+	}
+	// mode is validated against the closed off/one/all set above, so
+	// interpolating it here can't inject AppleScript syntax.
+	script := fmt.Sprintf(`tell application "Music" to set song repeat to %s`, mode)
+	_, err := c.runner.Run(ctx, script)
+	return err
+}
+
+// ErrInvalidVolume is returned by SetVolume for levels outside 0-100.
+var ErrInvalidVolume = errors.New("invalid volume")
+
+func (c *Client) Volume(ctx context.Context) (int, error) {
+	out, err := c.runner.Run(ctx, `tell application "Music" to sound volume`)
+	if err != nil {
+		return 0, err
+	}
+	level, convErr := strconv.Atoi(out)
+	if convErr != nil {
+		return 0, fmt.Errorf("unexpected osascript output: %q", out)
+	}
+	return level, nil
+}
+
+func (c *Client) SetVolume(ctx context.Context, level int) error {
+	if level < 0 || level > 100 {
+		return fmt.Errorf("%w: %d (must be 0-100)", ErrInvalidVolume, level)
+	}
+	// level is an int, so %d can't produce anything but digits - no injection risk.
+	script := fmt.Sprintf(`tell application "Music" to set sound volume to %d`, level)
+	_, err := c.runner.Run(ctx, script)
+	return err
 }
