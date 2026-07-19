@@ -1,0 +1,107 @@
+name: Dependabot Auto Merge
+
+on:
+  push:
+    branches:
+      - 'dependabot/**'
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 2
+
+      - name: Find PR number for this branch
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=$(gh pr list --head "${{ github.ref_name }}" --state open --json number --jq '.[0].number // empty')
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No open PR found for branch ${{ github.ref_name }}. Skipping."
+            echo "number=" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check release age (7 days minimum)
+        id: age-check
+        if: steps.pr.outputs.number != ''
+        run: |
+          ALL_OLD_ENOUGH=true
+          TOO_RECENT_PKG=""
+          SEVEN_DAYS_AGO_EPOCH=$(date -u -d "7 days ago" +%s)
+          NOW_EPOCH=$(date -u +%s)
+
+          # go.mod の差分から追加されたパッケージとバージョンを抽出
+          # 例: +	github.com/foo/bar v1.2.3
+          while IFS=' ' read -r PKG VER; do
+            [ -z "$PKG" ] || [ -z "$VER" ] && continue
+            [[ "$VER" != v* ]] && VER="v${VER}"
+
+            echo "Checking ${PKG}@${VER} ..."
+
+            # Go proxy API はローカル実行不要で同等の Time 情報を返すため直接利用する
+            # (go list -m -json も内部的に同 API を叩くが、pull_request_target で
+            # チェックアウト+コード実行を避けるためここでは curl で直接取得する)
+            INFO=$(curl -sf --max-time 10 "https://proxy.golang.org/${PKG}/@v/${VER}.info" || true)
+
+            if [ -z "$INFO" ]; then
+              echo "::warning::Cannot fetch release info for ${PKG}@${VER} from Go proxy. Closing PR for safety."
+              ALL_OLD_ENOUGH=false
+              TOO_RECENT_PKG="${PKG}@${VER} (release date unknown)"
+              break
+            fi
+
+            RELEASE_DATE=$(echo "$INFO" | jq -r '.Time')
+            RELEASE_EPOCH=$(date -u -d "$RELEASE_DATE" +%s)
+            AGE_DAYS=$(( (NOW_EPOCH - RELEASE_EPOCH) / 86400 ))
+
+            echo "${PKG}@${VER}: released ${RELEASE_DATE} (${AGE_DAYS} days ago)"
+
+            if [ "$RELEASE_EPOCH" -gt "$SEVEN_DAYS_AGO_EPOCH" ]; then
+              echo "::notice::${PKG}@${VER} is only ${AGE_DAYS} day(s) old. Requires 7+ days."
+              ALL_OLD_ENOUGH=false
+              TOO_RECENT_PKG="${PKG}@${VER} (${AGE_DAYS} day(s) old)"
+              break
+            fi
+          done < <(
+            git diff HEAD~1 -- go.mod \
+              | grep '^+' \
+              | grep -v '^+++' \
+              | grep -E 'v[0-9]+\.[0-9]+\.[0-9]+' \
+              | sed 's/^+[[:space:]]*//' \
+              | sed 's|[[:space:]]//.*||' \
+              | awk '{print $1, $2}'
+          )
+
+          echo "all_old_enough=${ALL_OLD_ENOUGH}" >> "$GITHUB_OUTPUT"
+          echo "too_recent_pkg=${TOO_RECENT_PKG}" >> "$GITHUB_OUTPUT"
+
+      - name: Enable auto-merge
+        if: steps.pr.outputs.number != '' && steps.age-check.outputs.all_old_enough == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr merge --auto --squash "${{ steps.pr.outputs.number }}" --repo "${{ github.repository }}"
+          echo "Auto-merge enabled for PR #${{ steps.pr.outputs.number }} (all packages are 7+ days old)"
+
+      - name: Close PR (package released less than 7 days ago)
+        if: steps.pr.outputs.number != '' && steps.age-check.outputs.all_old_enough == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TOO_RECENT_PKG: ${{ steps.age-check.outputs.too_recent_pkg }}
+        run: |
+          gh pr close "${{ steps.pr.outputs.number }}" --repo "${{ github.repository }}" \
+            --comment "## 自動マージ対象外のためクローズ
+
+          **対象パッケージ:** \`${TOO_RECENT_PKG}\`
+
+          リリースから 7 日未満のバージョンはサプライチェーン攻撃のリスク低減のため自動マージしません。
+          7 日経過後に DependaBot が再度 PR を作成します。"
