@@ -32,7 +32,7 @@ jobs:
   assets:
     needs: tagpr
     if: needs.tagpr.outputs.tagpr-tag != ''
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
