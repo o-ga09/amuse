@@ -27,6 +27,22 @@ archives:
       - CHANGELOG.md
 checksum:
   name_template: 'checksums.txt'
+brews:
+  -
+    name: amuse
+    repository:
+      owner: o-ga09
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/o-ga09/amuse"
+    description: "amuse controls Apple Music (Music.app) from the terminal on macOS, via AppleScript."
+    license: "MIT"
+    install: |
+      bin.install "amuse"
+    test: |
+      system "#{bin}/amuse --version"
 changelog:
   sort: asc
   filters:

@@ -14,6 +14,12 @@ separate MusicKit API (not implemented here).
 ## Install
 
 ```sh
+brew install o-ga09/tap/amuse
+```
+
+or
+
+```sh
 go install github.com/o-ga09/amuse@latest
 ```
 
