@@ -13,18 +13,21 @@
 
 - `make build` — build the `amuse` binary
 - `make test` — run tests with coverage
-- `make lint` — `go tool golangci-lint run ./...`
+- `make lint` — `golangci-lint run ./...` (global binary; version pinned in `ci.yml`, not `go.mod`)
 
 ## Tooling
 
-- `golangci-lint` and `govulncheck` are tracked as `go.mod` `tool` dependencies and invoked via
-  `go tool <name>` so local dev and CI always resolve the same pinned version. Do not install them
-  globally and call the global binary instead.
-- `gosec` and `gitleaks` are intentionally **not** `go.mod` tools — tracking either alongside
-  golangci-lint pulled in unrelated/incompatible transitive dependencies (see git history on the
-  `tools-go-mod` branch/PR #5 for what broke). They run as pinned GitHub Actions in
-  `.github/workflows/security.yml` instead. Don't try to move them back into `go.mod` without
-  re-verifying the module still builds cleanly.
+- `govulncheck` is tracked as a `go.mod` `tool` dependency and invoked via `go tool govulncheck` so
+  local dev and CI always resolve the same pinned version.
+- `golangci-lint`, `gosec`, and `gitleaks` are intentionally **not** `go.mod` tools. golangci-lint
+  was tried (see PR #5) but reverted a second time when it started blocking real runtime deps:
+  golangci-lint v2's bundled `charm.land/lipgloss/v2` requires a newer `charmbracelet/x/ansi` than
+  `charmbracelet/x/cellbuf` (a transitive dep of our own `bubbletea`/`lipgloss` v1 TUI stack)
+  supports, and MVS has no compatible combination to pick — the build breaks module-wide, not just
+  for the tool. gosec/gitleaks were reverted earlier for the same class of conflict (see PR #5).
+  All three run as pinned GitHub Actions instead (`ci.yml`, `security.yml`). Don't move any of them
+  back into `go.mod` without first confirming `go build ./...` still succeeds — this has broken
+  twice now.
 - Release automation: `tagpr` (`.tagpr`) opens the version-bump PR, merging it triggers
   `goreleaser` (`.goreleaser.yml`) to build/publish darwin binaries.
 - `main` requires PRs (branch protection) — never push directly to `main`.
