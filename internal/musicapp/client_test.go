@@ -51,8 +51,8 @@ func TestClient_PlaybackActions(t *testing.T) {
 	}{
 		{"Play", (*Client).Play, "to play"},
 		{"Pause", (*Client).Pause, "to pause"},
-		{"Next", (*Client).Next, "to next track"},
-		{"Previous", (*Client).Previous, "to previous track"},
+		{"Next", (*Client).Next, "next track"},
+		{"Previous", (*Client).Previous, "previous track"},
 	}
 
 	for _, tt := range tests {
@@ -75,6 +75,37 @@ func TestClient_PlaybackActions(t *testing.T) {
 
 			if err := tt.call(c, t.Context()); !errors.Is(err, wantErr) {
 				t.Errorf("err = %v, want %v", err, wantErr)
+			}
+		})
+	}
+}
+
+func TestClient_NextAndPrevious_FallBackToPlayWhenStopped(t *testing.T) {
+	tests := []struct {
+		name         string
+		call         func(*Client, context.Context) error
+		wantWhenLive string
+	}{
+		{"Next", (*Client).Next, "next track"},
+		{"Previous", (*Client).Previous, "previous track"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &fakeRunner{}
+			c := NewClient(r)
+
+			if err := tt.call(c, t.Context()); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(r.script, "if player state is stopped") {
+				t.Errorf("script should detect the stopped state: %q", r.script)
+			}
+			if !strings.Contains(r.script, "play") {
+				t.Errorf("script should fall back to play when stopped: %q", r.script)
+			}
+			if !strings.Contains(r.script, tt.wantWhenLive) {
+				t.Errorf("script should still %q while playing: %q", tt.wantWhenLive, r.script)
 			}
 		})
 	}

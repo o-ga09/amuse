@@ -42,13 +42,34 @@ func (c *Client) Pause(ctx context.Context) error {
 	return err
 }
 
+// nextScript and previousScript guard against the queue-boundary dead-end: once
+// playback reaches the end of the queue Music.app's player state goes to
+// stopped, and "next track"/"previous track" become no-ops with no current
+// track to move from, leaving the TUI stuck on "Nothing playing." (issue #22).
+// Falling back to "play" restarts the current playlist instead of no-op'ing.
+const nextScript = `tell application "Music"
+	if player state is stopped then
+		play
+	else
+		next track
+	end if
+end tell`
+
+const previousScript = `tell application "Music"
+	if player state is stopped then
+		play
+	else
+		previous track
+	end if
+end tell`
+
 func (c *Client) Next(ctx context.Context) error {
-	_, err := c.runner.Run(ctx, `tell application "Music" to next track`)
+	_, err := c.runner.Run(ctx, nextScript)
 	return err
 }
 
 func (c *Client) Previous(ctx context.Context) error {
-	_, err := c.runner.Run(ctx, `tell application "Music" to previous track`)
+	_, err := c.runner.Run(ctx, previousScript)
 	return err
 }
 
