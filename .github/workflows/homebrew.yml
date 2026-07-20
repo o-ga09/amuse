@@ -1,0 +1,27 @@
+name: homebrew
+
+# Verify the published Homebrew formula actually installs and runs, instead of
+# relying on a manual `brew install` after each release. Runs on a schedule (so
+# a formula broken by a bad release surfaces within a day, not when a user hits
+# it) and on demand. See issue #18.
+on:
+  schedule:
+    - cron: "0 6 * * *" # daily at 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-formula:
+    name: Verify Homebrew formula installs
+    runs-on: macos-latest
+    steps:
+      - name: Install amuse from the tap
+        run: brew install --formula o-ga09/tap/amuse
+
+      - name: Run the formula's test block
+        run: brew test o-ga09/tap/amuse
+
+      - name: Verify the binary runs
+        run: amuse --version
