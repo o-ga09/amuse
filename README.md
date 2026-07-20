@@ -55,13 +55,13 @@ TUI keybindings: `space` play/pause, `n` next, `p` prev, `s` toggle shuffle, `c`
 When the current track is an Apple Music / iTunes Match item and the computer hasn't been
 authorized, Music.app raises an authorization dialog instead of returning album artwork:
 
-> このコンピュータは承認されていません。このコンピュータ上で Apple Music や iTunes Match を使用するには、コンピュータを承認する必要があります。
->
-> ("This computer is not authorized. To use Apple Music or iTunes Match on this computer, you need
-> to authorize the computer.")
+> This computer is not authorized. To use Apple Music or iTunes Match on this computer, you need
+> to authorize the computer.
 
-Authorize the computer in Music.app: **Account → Authorizations → Authorize This Computer…**
-(アカウント → 認証 → このコンピュータを認証), then sign in with your Apple Account.
+(The dialog is shown in your system language.)
+
+Authorize the computer in Music.app: **Account → Authorizations → Authorize This Computer…**,
+then sign in with your Apple Account.
 
 <p align="center">
   <img src="docs/authorize-computer.gif" alt="Music.app: Account → Authorizations → Authorize This Computer, then sign in with your Apple Account." width="700">
