@@ -31,6 +31,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: write # octocov posts the coverage comment
+      actions: write # octocov stores/reads the coverage baseline artifact
     steps:
       - name: Check out source code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -42,3 +44,6 @@ jobs:
 
       - name: Run tests
         run: make test
+
+      - name: Report coverage
+        uses: k1LoW/octocov-action@b3b6ee60482a667950f87553abf1df63217235d9 # v1.5.1

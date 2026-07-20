@@ -1,0 +1,22 @@
+# octocov configuration — reports Go test coverage on PRs and in the job
+# summary. Coverage comes from coverage.out, which `make test` writes.
+# https://github.com/k1LoW/octocov
+coverage:
+  paths:
+    - coverage.out
+codeToTestRatio:
+  code:
+    - "**/*.go"
+    - "!**/*_test.go"
+  test:
+    - "**/*_test.go"
+comment:
+  if: is_pull_request
+summary:
+  if: true
+# Store each main-branch report as a workflow artifact so PR runs can show the
+# coverage delta against main. octocov skips the diff gracefully until the first
+# baseline exists.
+diff:
+  datastores:
+    - artifact://${GITHUB_REPOSITORY}
