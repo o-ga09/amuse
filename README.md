@@ -48,6 +48,30 @@ amuse volume 50  # set volume (0-100)
 TUI keybindings: `space` play/pause, `n` next, `p` prev, `s` toggle shuffle, `c` cycle repeat,
 `+`/`-` volume, `r` refresh, `q` quit.
 
+## Troubleshooting
+
+### "This computer is not authorized" when fetching artwork
+
+When the current track is an Apple Music / iTunes Match item and the computer hasn't been
+authorized, Music.app raises an authorization dialog instead of returning album artwork:
+
+> This computer is not authorized. To use Apple Music or iTunes Match on this computer, you need
+> to authorize the computer.
+
+(The dialog is shown in your system language.)
+
+Authorize the computer in Music.app: **Account → Authorizations → Authorize This Computer…**,
+then sign in with your Apple Account.
+
+<p align="center">
+  <img src="docs/authorize-computer.gif" alt="Music.app: Account → Authorizations → Authorize This Computer, then sign in with your Apple Account." width="700">
+</p>
+
+> [!NOTE]
+> macOS allows a single Apple Account to authorize up to 5 computers. If you're at the limit,
+> deauthorize an old computer (or use **Deauthorize All** from a computer signed in to the account)
+> before authorizing this one.
+
 ## Development
 
 ```sh
