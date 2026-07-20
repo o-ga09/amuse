@@ -1,5 +1,20 @@
 # Changelog
 
+## [v0.0.2](https://github.com/o-ga09/amuse/compare/v0.0.1...v0.0.2) - 2026-07-20
+
+### New Features 🎉
+- feat: show album artwork in the now-playing TUI by @o-ga09 in https://github.com/o-ga09/amuse/pull/19
+- feat: add benchmarks to verify Go-native performance by @o-ga09 in https://github.com/o-ga09/amuse/pull/26
+- docs: document the &quot;computer not authorized&quot; artwork error (#21) by @o-ga09 in https://github.com/o-ga09/amuse/pull/27
+- feat: ローカルライブラリ検索/一覧コマンド (search/songs) を追加 (#17) by @o-ga09 in https://github.com/o-ga09/amuse/pull/29
+- feat: add arrow-key navigable playlist/track browser to the TUI by @o-ga09 in https://github.com/o-ga09/amuse/pull/30
+- feat: add playlist create/delete/add/remove management to the TUI by @o-ga09 in https://github.com/o-ga09/amuse/pull/31
+### Fix bug 🐛
+- feat: auto-refresh the now-playing TUI on a timer by @o-ga09 in https://github.com/o-ga09/amuse/pull/24
+- [fix] キュー末尾で next/prev がプレイリスト先頭に戻るようにする by @o-ga09 in https://github.com/o-ga09/amuse/pull/25
+### Other Changes
+- Add cmd/ tests, Homebrew install CI, and octocov coverage reporting by @o-ga09 in https://github.com/o-ga09/amuse/pull/32
+
 ## [v0.0.1](https://github.com/o-ga09/amuse/commits/v0.0.1) - 2026-07-19
 
 ### New Features 🎉
