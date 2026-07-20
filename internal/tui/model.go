@@ -17,6 +17,13 @@ import (
 
 const actionTimeout = 5 * time.Second
 
+// refreshInterval is how often the TUI polls Music.app so that changes made
+// outside the TUI (auto-advance to the next track, or playback controlled from
+// Music.app directly) show up without user input. Each tick spawns a fresh set
+// of osascript processes, so keep it from tightening below the ~1s range. It's
+// a var rather than a const so tests can shorten it.
+var refreshInterval = time.Second
+
 var (
 	titleStyle = lipgloss.NewStyle().Bold(true)
 	dimStyle   = lipgloss.NewStyle().Faint(true)
@@ -42,6 +49,10 @@ type artworkMsg struct {
 	rendered string
 	err      error
 }
+
+// tickMsg is delivered on refreshInterval to drive periodic polling of
+// Music.app; see refreshInterval.
+type tickMsg time.Time
 
 // shuffleMsg, repeatMsg, and volumeMsg carry the result of their respective
 // status fetches. A fetch error just leaves the last known value on screen
@@ -81,13 +92,18 @@ func New(client *musicapp.Client) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return fetchAll(m.client)
+	return tea.Batch(fetchAll(m.client), tick())
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	case tickMsg:
+		if m.quitting {
+			return m, nil
+		}
+		return m, tea.Batch(fetchAll(m.client), tick())
 	case nowPlayingMsg:
 		trackChanged := trackIdentity(m.track) != trackIdentity(msg.track)
 		m.track = msg.track
@@ -305,6 +321,13 @@ func fetchArtwork(c *musicapp.Client) tea.Cmd {
 // parallel; each fetch is an independent osascript invocation.
 func fetchAll(c *musicapp.Client) tea.Cmd {
 	return tea.Batch(fetchNowPlaying(c), fetchShuffle(c), fetchRepeat(c), fetchVolume(c))
+}
+
+// tick schedules a tickMsg after refreshInterval to drive periodic polling.
+func tick() tea.Cmd {
+	return tea.Tick(refreshInterval, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
 }
 
 func doAction(action func(context.Context) error) tea.Cmd {
