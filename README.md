@@ -55,3 +55,29 @@ make build
 make test
 make lint
 ```
+
+### Benchmarks
+
+Run the benchmarks (they're excluded from a normal `make test`, which uses `-run`/no `-bench`):
+
+```sh
+go test ./internal/... -run='^$' -bench=. -benchmem
+```
+
+The point of these is to check where a command's time actually goes. Measured on an Apple M4
+(darwin/arm64), the answer is: not in the Go code.
+
+| Benchmark                       | Time per op | What it measures                              |
+| ------------------------------- | ----------- | --------------------------------------------- |
+| `Client_NowPlaying`             | ~48 ns      | script build + output parse (fake runner)     |
+| `Client_Play`                   | ~2 ns       | script build (fake runner)                    |
+| `Client_SetVolume`              | ~52 ns      | script build + parse (fake runner)            |
+| `Model_Update_NowPlaying`       | ~51 ns      | TUI message handling                          |
+| `Model_View`                    | ~2 µs       | TUI render (string building)                  |
+| `OSARunner_RoundTrip`           | **~29 ms**  | one real `osascript` process spawn            |
+
+So a single `osascript` spawn costs roughly **600,000×** the Go-side parsing per command — the Go
+code is effectively free, and total latency is dominated entirely by process spawn. Any future
+performance work should target the spawn count (e.g. a long-lived AppleScript/JXA process), not the
+Go paths. `OSARunner_RoundTrip` runs a trivial no-op script and is skipped in `-short` mode and when
+`osascript` isn't on `PATH` (i.e. on non-macOS CI).
