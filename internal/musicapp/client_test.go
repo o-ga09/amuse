@@ -442,6 +442,120 @@ func TestClient_PlaySong(t *testing.T) {
 	})
 }
 
+func TestClient_CreatePlaylist(t *testing.T) {
+	t.Run("escapes the name and makes a new playlist", func(t *testing.T) {
+		r := &fakeRunner{}
+		c := NewClient(r)
+
+		if err := c.CreatePlaylist(t.Context(), `Road "Trip"`); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(r.script, `make new playlist with properties {name:"Road \"Trip\""}`) {
+			t.Errorf("script = %q, want an escaped make-new-playlist command", r.script)
+		}
+	})
+
+	t.Run("rejects a blank name without running a script", func(t *testing.T) {
+		r := &fakeRunner{}
+		c := NewClient(r)
+
+		if err := c.CreatePlaylist(t.Context(), "   "); !errors.Is(err, ErrEmptyPlaylistName) {
+			t.Fatalf("err = %v, want %v", err, ErrEmptyPlaylistName)
+		}
+		if r.script != "" {
+			t.Errorf("expected no script to run, got %q", r.script)
+		}
+	})
+
+	t.Run("propagates runner error", func(t *testing.T) {
+		wantErr := errors.New("boom")
+		r := &fakeRunner{err: wantErr}
+		c := NewClient(r)
+
+		if err := c.CreatePlaylist(t.Context(), "x"); !errors.Is(err, wantErr) {
+			t.Errorf("err = %v, want %v", err, wantErr)
+		}
+	})
+}
+
+func TestClient_DeletePlaylist(t *testing.T) {
+	t.Run("escapes the name and deletes the playlist", func(t *testing.T) {
+		r := &fakeRunner{}
+		c := NewClient(r)
+
+		if err := c.DeletePlaylist(t.Context(), `My "List"`); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(r.script, `delete (first playlist whose name is "My \"List\"")`) {
+			t.Errorf("script = %q, want an escaped delete-playlist command", r.script)
+		}
+	})
+
+	t.Run("propagates runner error", func(t *testing.T) {
+		wantErr := errors.New("boom")
+		r := &fakeRunner{err: wantErr}
+		c := NewClient(r)
+
+		if err := c.DeletePlaylist(t.Context(), "x"); !errors.Is(err, wantErr) {
+			t.Errorf("err = %v, want %v", err, wantErr)
+		}
+	})
+}
+
+func TestClient_AddSongToPlaylist(t *testing.T) {
+	t.Run("interpolates a 1-based index and escapes the playlist name", func(t *testing.T) {
+		r := &fakeRunner{}
+		c := NewClient(r)
+
+		if err := c.AddSongToPlaylist(t.Context(), 4, `Fav "s"`); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := `duplicate (track 5 of library playlist 1) to (first playlist whose name is "Fav \"s\"")`
+		if !strings.Contains(r.script, want) {
+			t.Errorf("script = %q, want %q", r.script, want)
+		}
+	})
+
+	t.Run("rejects a negative index without running a script", func(t *testing.T) {
+		r := &fakeRunner{}
+		c := NewClient(r)
+
+		if err := c.AddSongToPlaylist(t.Context(), -1, "x"); !errors.Is(err, ErrInvalidPagination) {
+			t.Fatalf("err = %v, want %v", err, ErrInvalidPagination)
+		}
+		if r.script != "" {
+			t.Errorf("expected no script to run, got %q", r.script)
+		}
+	})
+}
+
+func TestClient_RemovePlaylistTrack(t *testing.T) {
+	t.Run("interpolates a 1-based index and escapes the playlist name", func(t *testing.T) {
+		r := &fakeRunner{}
+		c := NewClient(r)
+
+		if err := c.RemovePlaylistTrack(t.Context(), `My "List"`, 2); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := `delete (track 3 of (first playlist whose name is "My \"List\""))`
+		if !strings.Contains(r.script, want) {
+			t.Errorf("script = %q, want %q", r.script, want)
+		}
+	})
+
+	t.Run("rejects a negative index without running a script", func(t *testing.T) {
+		r := &fakeRunner{}
+		c := NewClient(r)
+
+		if err := c.RemovePlaylistTrack(t.Context(), "x", -1); !errors.Is(err, ErrInvalidPagination) {
+			t.Fatalf("err = %v, want %v", err, ErrInvalidPagination)
+		}
+		if r.script != "" {
+			t.Errorf("expected no script to run, got %q", r.script)
+		}
+	})
+}
+
 func TestClient_Shuffle(t *testing.T) {
 	tests := []struct {
 		name   string
