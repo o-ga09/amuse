@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -339,6 +340,89 @@ func TestModel_Update_StatusMsgs(t *testing.T) {
 	if mm.volume != 42 {
 		t.Errorf("volume = %d after failed fetch, want unchanged 42", mm.volume)
 	}
+}
+
+// collectMsgs runs cmd and flattens any (possibly nested) tea.BatchMsg into the
+// concrete messages its leaf commands produce.
+func collectMsgs(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	var out []tea.Msg
+	switch msg := cmd().(type) {
+	case tea.BatchMsg:
+		for _, sub := range msg {
+			out = append(out, collectMsgs(sub)...)
+		}
+	default:
+		out = append(out, msg)
+	}
+	return out
+}
+
+func TestModel_Init_SchedulesTick(t *testing.T) {
+	old := refreshInterval
+	refreshInterval = time.Millisecond
+	defer func() { refreshInterval = old }()
+
+	m := New(musicapp.NewClient(&stubRunner{output: "stopped"}))
+
+	var gotNowPlaying, gotTick bool
+	for _, msg := range collectMsgs(m.Init()) {
+		switch msg.(type) {
+		case nowPlayingMsg:
+			gotNowPlaying = true
+		case tickMsg:
+			gotTick = true
+		}
+	}
+	if !gotNowPlaying {
+		t.Error("expected Init to fetch now-playing state")
+	}
+	if !gotTick {
+		t.Error("expected Init to schedule a tick")
+	}
+}
+
+func TestModel_Update_TickMsg(t *testing.T) {
+	old := refreshInterval
+	refreshInterval = time.Millisecond
+	defer func() { refreshInterval = old }()
+
+	t.Run("refreshes state and reschedules the next tick", func(t *testing.T) {
+		m := New(musicapp.NewClient(&stubRunner{output: "stopped"}))
+
+		_, cmd := m.Update(tickMsg(time.Now()))
+		if cmd == nil {
+			t.Fatal("expected a command")
+		}
+
+		var gotNowPlaying, gotTick bool
+		for _, msg := range collectMsgs(cmd) {
+			switch msg.(type) {
+			case nowPlayingMsg:
+				gotNowPlaying = true
+			case tickMsg:
+				gotTick = true
+			}
+		}
+		if !gotNowPlaying {
+			t.Error("expected the tick to refresh now-playing state")
+		}
+		if !gotTick {
+			t.Error("expected the tick to reschedule itself")
+		}
+	})
+
+	t.Run("stops ticking once quitting", func(t *testing.T) {
+		m := New(musicapp.NewClient(&stubRunner{}))
+		m.quitting = true
+
+		_, cmd := m.Update(tickMsg(time.Now()))
+		if cmd != nil {
+			t.Error("expected no command once quitting")
+		}
+	})
 }
 
 func TestNextRepeatMode(t *testing.T) {
