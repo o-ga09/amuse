@@ -288,6 +288,154 @@ func TestClient_Songs(t *testing.T) {
 	})
 }
 
+func TestClient_Playlists(t *testing.T) {
+	t.Run("parses newline-separated names", func(t *testing.T) {
+		r := &fakeRunner{output: "My Chill Mix\nWorkout, Vol. 1\nFocus\n"}
+		c := NewClient(r)
+
+		got, err := c.Playlists(t.Context())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := []string{"My Chill Mix", "Workout, Vol. 1", "Focus"}
+		if len(got) != len(want) {
+			t.Fatalf("got %d playlists, want %d: %+v", len(got), len(want), got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("playlist %d = %q, want %q", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("no playlists returns nil", func(t *testing.T) {
+		r := &fakeRunner{output: ""}
+		c := NewClient(r)
+
+		got, err := c.Playlists(t.Context())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != nil {
+			t.Errorf("got %+v, want nil", got)
+		}
+	})
+
+	t.Run("propagates runner error", func(t *testing.T) {
+		wantErr := errors.New("boom")
+		r := &fakeRunner{err: wantErr}
+		c := NewClient(r)
+
+		if _, err := c.Playlists(t.Context()); !errors.Is(err, wantErr) {
+			t.Errorf("err = %v, want %v", err, wantErr)
+		}
+	})
+}
+
+func TestClient_PlaylistTracks(t *testing.T) {
+	t.Run("parses tracks and escapes the playlist name", func(t *testing.T) {
+		r := &fakeRunner{output: "Song\tArtist\tAlbum"}
+		c := NewClient(r)
+
+		got, err := c.PlaylistTracks(t.Context(), `Chill "Vibes"`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(got) != 1 || got[0] != (LibraryTrack{Name: "Song", Artist: "Artist", Album: "Album"}) {
+			t.Fatalf("got %+v, want a single Song/Artist/Album track", got)
+		}
+		if !strings.Contains(r.script, `name is "Chill \"Vibes\""`) {
+			t.Errorf("playlist name not escaped in script: %q", r.script)
+		}
+	})
+
+	t.Run("propagates runner error", func(t *testing.T) {
+		wantErr := errors.New("boom")
+		r := &fakeRunner{err: wantErr}
+		c := NewClient(r)
+
+		if _, err := c.PlaylistTracks(t.Context(), "x"); !errors.Is(err, wantErr) {
+			t.Errorf("err = %v, want %v", err, wantErr)
+		}
+	})
+}
+
+func TestClient_PlayPlaylist(t *testing.T) {
+	t.Run("escapes the name and plays the playlist", func(t *testing.T) {
+		r := &fakeRunner{}
+		c := NewClient(r)
+
+		if err := c.PlayPlaylist(t.Context(), `a" & "b`); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(r.script, `play (first playlist whose name is "a\" & \"b")`) {
+			t.Errorf("script = %q, want an escaped play-playlist command", r.script)
+		}
+	})
+
+	t.Run("propagates runner error", func(t *testing.T) {
+		wantErr := errors.New("boom")
+		r := &fakeRunner{err: wantErr}
+		c := NewClient(r)
+
+		if err := c.PlayPlaylist(t.Context(), "x"); !errors.Is(err, wantErr) {
+			t.Errorf("err = %v, want %v", err, wantErr)
+		}
+	})
+}
+
+func TestClient_PlayPlaylistTrack(t *testing.T) {
+	t.Run("interpolates a 1-based index and escapes the name", func(t *testing.T) {
+		r := &fakeRunner{}
+		c := NewClient(r)
+
+		if err := c.PlayPlaylistTrack(t.Context(), `My "List"`, 2); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(r.script, `play (track 3 of (first playlist whose name is "My \"List\""))`) {
+			t.Errorf("script = %q, want track 3 of the escaped playlist", r.script)
+		}
+	})
+
+	t.Run("rejects a negative index without running a script", func(t *testing.T) {
+		r := &fakeRunner{}
+		c := NewClient(r)
+
+		if err := c.PlayPlaylistTrack(t.Context(), "x", -1); !errors.Is(err, ErrInvalidPagination) {
+			t.Fatalf("err = %v, want %v", err, ErrInvalidPagination)
+		}
+		if r.script != "" {
+			t.Errorf("expected no script to run, got %q", r.script)
+		}
+	})
+}
+
+func TestClient_PlaySong(t *testing.T) {
+	t.Run("interpolates a 1-based library index", func(t *testing.T) {
+		r := &fakeRunner{}
+		c := NewClient(r)
+
+		if err := c.PlaySong(t.Context(), 0); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(r.script, "play (track 1 of library playlist 1)") {
+			t.Errorf("script = %q, want track 1 of library playlist 1", r.script)
+		}
+	})
+
+	t.Run("rejects a negative index without running a script", func(t *testing.T) {
+		r := &fakeRunner{}
+		c := NewClient(r)
+
+		if err := c.PlaySong(t.Context(), -1); !errors.Is(err, ErrInvalidPagination) {
+			t.Fatalf("err = %v, want %v", err, ErrInvalidPagination)
+		}
+		if r.script != "" {
+			t.Errorf("expected no script to run, got %q", r.script)
+		}
+	})
+}
+
 func TestClient_Shuffle(t *testing.T) {
 	tests := []struct {
 		name   string

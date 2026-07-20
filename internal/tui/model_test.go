@@ -458,6 +458,182 @@ func TestClamp(t *testing.T) {
 	}
 }
 
+func key(s string) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+}
+
+func updateModel(t *testing.T, m Model, msg tea.Msg) Model {
+	t.Helper()
+	got, _ := m.Update(msg)
+	mm, ok := got.(Model)
+	if !ok {
+		t.Fatalf("Update returned %T, want Model", got)
+	}
+	return mm
+}
+
+func TestModel_Update_TabCycles(t *testing.T) {
+	m := New(musicapp.NewClient(&stubRunner{}))
+	if m.tab != tabNowPlaying {
+		t.Fatalf("initial tab = %v, want tabNowPlaying", m.tab)
+	}
+
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.tab != tabPlaylists {
+		t.Errorf("after tab, tab = %v, want tabPlaylists", m.tab)
+	}
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.tab != tabSongs {
+		t.Errorf("after tab, tab = %v, want tabSongs", m.tab)
+	}
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.tab != tabNowPlaying {
+		t.Errorf("tab should wrap back to tabNowPlaying, got %v", m.tab)
+	}
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
+	if m.tab != tabSongs {
+		t.Errorf("shift+tab should wrap to tabSongs, got %v", m.tab)
+	}
+}
+
+func TestModel_SwitchToPlaylistsTab_FetchesOnce(t *testing.T) {
+	m := New(musicapp.NewClient(&stubRunner{output: "Chill\nWorkout\n"}))
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if cmd == nil {
+		t.Fatal("expected a fetch command on first switch to Playlists")
+	}
+	msg, ok := cmd().(playlistsMsg)
+	if !ok {
+		t.Fatalf("cmd produced %T, want playlistsMsg", cmd())
+	}
+	m = updateModel(t, m, msg)
+	if len(m.playlists) != 2 {
+		t.Fatalf("playlists = %+v, want 2 entries", m.playlists)
+	}
+
+	// Leaving and returning must not refetch now that it's loaded.
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyTab})  // -> Songs
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab}) // -> Playlists again
+	if cmd != nil {
+		t.Error("expected no refetch when returning to an already-loaded tab")
+	}
+}
+
+func TestModel_PlaylistsTab_EnterDrillsInAndPlaysTrack(t *testing.T) {
+	r := &stubRunner{output: "Chill\nWorkout\n"}
+	m := New(musicapp.NewClient(r))
+	m.tab = tabPlaylists
+	m.playlistsLoaded = true
+	m.playlists = []string{"Chill", "Workout"}
+
+	// Move to the second playlist and open it.
+	m = updateModel(t, m, key("j"))
+	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, ok := got.(Model)
+	if !ok {
+		t.Fatalf("Update returned %T, want Model", got)
+	}
+	if m.openPlaylist != "Workout" {
+		t.Fatalf("openPlaylist = %q, want Workout", m.openPlaylist)
+	}
+	if cmd == nil {
+		t.Fatal("expected a command to fetch the playlist's tracks")
+	}
+	tracksMsg, ok := cmd().(playlistTracksMsg)
+	if !ok {
+		t.Fatalf("cmd produced %T, want playlistTracksMsg", cmd())
+	}
+	if !strings.Contains(r.script, `name is "Workout"`) {
+		t.Errorf("fetch script = %q, want the Workout playlist", r.script)
+	}
+
+	tracksMsg.tracks = []musicapp.LibraryTrack{{Name: "A"}, {Name: "B"}}
+	m = updateModel(t, m, tracksMsg)
+
+	// Play the second track.
+	m = updateModel(t, m, key("j"))
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected a play command")
+	}
+	cmd()
+	if !strings.Contains(r.script, `play (track 2 of (first playlist whose name is "Workout"))`) {
+		t.Errorf("script = %q, want play of track 2 of Workout", r.script)
+	}
+}
+
+func TestModel_PlaylistsTab_EscGoesBackToList(t *testing.T) {
+	m := New(musicapp.NewClient(&stubRunner{}))
+	m.tab = tabPlaylists
+	m.playlistsLoaded = true
+	m.playlists = []string{"Chill"}
+	m.openPlaylist = "Chill"
+	m.playlistTracks = []musicapp.LibraryTrack{{Name: "A"}}
+	m.trackCursor = 0
+
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.openPlaylist != "" {
+		t.Errorf("openPlaylist = %q, want empty after esc", m.openPlaylist)
+	}
+	if m.playlistTracks != nil {
+		t.Errorf("playlistTracks = %+v, want cleared after esc", m.playlistTracks)
+	}
+}
+
+func TestModel_SongsTab_EnterPlaysSelectedSong(t *testing.T) {
+	r := &stubRunner{}
+	m := New(musicapp.NewClient(r))
+	m.tab = tabSongs
+	m.songsLoaded = true
+	m.songs = []musicapp.LibraryTrack{{Name: "A"}, {Name: "B"}, {Name: "C"}}
+
+	m = updateModel(t, m, key("j"))
+	m = updateModel(t, m, key("j"))
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected a play command")
+	}
+	cmd()
+	if !strings.Contains(r.script, "play (track 3 of library playlist 1)") {
+		t.Errorf("script = %q, want play of track 3 of the library", r.script)
+	}
+}
+
+func TestModel_Navigation_ClampsAtEnds(t *testing.T) {
+	m := New(musicapp.NewClient(&stubRunner{}))
+	m.tab = tabSongs
+	m.songsLoaded = true
+	m.songs = []musicapp.LibraryTrack{{Name: "A"}, {Name: "B"}}
+
+	m = updateModel(t, m, key("k")) // up at the top stays at 0
+	if m.songCursor != 0 {
+		t.Errorf("songCursor = %d, want 0 (clamped at top)", m.songCursor)
+	}
+	m = updateModel(t, m, key("j"))
+	m = updateModel(t, m, key("j"))
+	m = updateModel(t, m, key("j")) // down past the end stays on the last item
+	if m.songCursor != 1 {
+		t.Errorf("songCursor = %d, want 1 (clamped at bottom)", m.songCursor)
+	}
+}
+
+func TestModel_TransportKeysWorkWhileBrowsing(t *testing.T) {
+	r := &stubRunner{}
+	m := New(musicapp.NewClient(r))
+	m.tab = tabSongs
+	m.songsLoaded = true
+
+	_, cmd := m.Update(key("n"))
+	if cmd == nil {
+		t.Fatal("expected next-track command from the Songs tab")
+	}
+	cmd()
+	if !strings.Contains(r.script, "next track") {
+		t.Errorf("script = %q, want next track", r.script)
+	}
+}
+
 func TestModel_View(t *testing.T) {
 	tests := []struct {
 		name string

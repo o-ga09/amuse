@@ -290,6 +290,101 @@ func parseLibraryTracks(out string) []LibraryTrack {
 	return tracks
 }
 
+// playlistsScript builds a newline-separated list of playlist names manually
+// rather than relying on AppleScript's default comma-space list formatting,
+// which is ambiguous for names that themselves contain a comma.
+const playlistsScript = `tell application "Music"
+	set nl to (ASCII character 10)
+	set out to ""
+	repeat with p in playlists
+		set out to out & (name of p) & nl
+	end repeat
+	return out
+end tell`
+
+// Playlists lists the names of every playlist in the local library.
+func (c *Client) Playlists(ctx context.Context) ([]string, error) {
+	out, err := c.runner.Run(ctx, playlistsScript)
+	if err != nil {
+		return nil, err
+	}
+	return parsePlaylistNames(out), nil
+}
+
+// parsePlaylistNames splits the newline-delimited output of playlistsScript,
+// skipping blank lines (trailing newline, empty names).
+func parsePlaylistNames(out string) []string {
+	if out == "" {
+		return nil
+	}
+	var names []string
+	for line := range strings.SplitSeq(out, "\n") {
+		if line == "" {
+			continue
+		}
+		names = append(names, line)
+	}
+	return names
+}
+
+// playlistTracksScript lists the tracks of the first playlist whose name
+// matches. The name is free-text and must be escaped before interpolation; see
+// escapeAppleScriptString.
+const playlistTracksScript = `tell application "Music"
+	set nl to (ASCII character 10)
+	set tb to (ASCII character 9)
+	set out to ""
+	set pl to (first playlist whose name is "%s")
+	repeat with t in (every track of pl)
+		set out to out & (name of t) & tb & (artist of t) & tb & (album of t) & nl
+	end repeat
+	return out
+end tell`
+
+// PlaylistTracks lists the tracks of the named playlist, in playlist order. The
+// index of each track matches the trackIndex expected by PlayPlaylistTrack.
+func (c *Client) PlaylistTracks(ctx context.Context, name string) ([]LibraryTrack, error) {
+	script := fmt.Sprintf(playlistTracksScript, escapeAppleScriptString(name))
+	out, err := c.runner.Run(ctx, script)
+	if err != nil {
+		return nil, err
+	}
+	return parseLibraryTracks(out), nil
+}
+
+// PlayPlaylist starts playback of the named playlist from its first track.
+func (c *Client) PlayPlaylist(ctx context.Context, name string) error {
+	script := fmt.Sprintf(`tell application "Music" to play (first playlist whose name is "%s")`,
+		escapeAppleScriptString(name))
+	_, err := c.runner.Run(ctx, script)
+	return err
+}
+
+// PlayPlaylistTrack plays a single track of the named playlist, addressed by its
+// 0-based position in the order PlaylistTracks returns. The name is escaped; the
+// index is an int, so %d yields digits only and can't inject syntax.
+func (c *Client) PlayPlaylistTrack(ctx context.Context, name string, index int) error {
+	if index < 0 {
+		return fmt.Errorf("%w: index %d must be >= 0", ErrInvalidPagination, index)
+	}
+	script := fmt.Sprintf(`tell application "Music" to play (track %d of (first playlist whose name is "%s"))`,
+		index+1, escapeAppleScriptString(name))
+	_, err := c.runner.Run(ctx, script)
+	return err
+}
+
+// PlaySong plays the track at the given 0-based position in the main library
+// (library playlist 1), matching the ordering of Songs with offset 0.
+func (c *Client) PlaySong(ctx context.Context, index int) error {
+	if index < 0 {
+		return fmt.Errorf("%w: index %d must be >= 0", ErrInvalidPagination, index)
+	}
+	// index is an int, so %d can't produce anything but digits - no injection risk.
+	script := fmt.Sprintf(`tell application "Music" to play (track %d of library playlist 1)`, index+1)
+	_, err := c.runner.Run(ctx, script)
+	return err
+}
+
 // Shuffle reports whether shuffle is currently enabled.
 func (c *Client) Shuffle(ctx context.Context) (bool, error) {
 	out, err := c.runner.Run(ctx, `tell application "Music" to shuffle enabled`)
