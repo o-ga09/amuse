@@ -167,6 +167,129 @@ func (c *Client) Artwork(ctx context.Context) ([]byte, error) {
 	}
 }
 
+// LibraryTrack is a track from the local library, as returned by Search and Songs.
+type LibraryTrack struct {
+	Name   string
+	Artist string
+	Album  string
+}
+
+// escapeAppleScriptString neutralizes a free-text value so it can be
+// interpolated into an AppleScript double-quoted string literal without
+// injecting syntax. Backslashes and double quotes are escaped so the value
+// can't break out of the literal; other control characters are dropped because
+// AppleScript literals can't hold a raw newline/tab (they'd be a syntax error)
+// and they have no meaning in a library search term. See
+// .claude/rules/security-review.md.
+func escapeAppleScriptString(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '\\':
+			b.WriteString(`\\`)
+		case r == '"':
+			b.WriteString(`\"`)
+		case r < 0x20 || r == 0x7f:
+			// drop control characters
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// Track fields are joined with a tab and rows with a newline (ASCII 9 / 10),
+// mirroring nowPlayingScript's line-feed convention. Track names containing a
+// literal tab or newline are rare enough to accept the parsing ambiguity.
+const searchScript = `tell application "Music"
+	set nl to (ASCII character 10)
+	set tb to (ASCII character 9)
+	set out to ""
+	set matches to (search library playlist 1 for "%s")
+	repeat with t in matches
+		set out to out & (name of t) & tb & (artist of t) & tb & (album of t) & nl
+	end repeat
+	return out
+end tell`
+
+// Search returns local-library tracks matching query. It searches the library
+// only (AppleScript's `search` command), never the full Apple Music catalog.
+func (c *Client) Search(ctx context.Context, query string) ([]LibraryTrack, error) {
+	script := fmt.Sprintf(searchScript, escapeAppleScriptString(query))
+	out, err := c.runner.Run(ctx, script)
+	if err != nil {
+		return nil, err
+	}
+	return parseLibraryTracks(out), nil
+}
+
+// songsScript lists library tracks from a 1-based offset. limit and offset are
+// interpolated as %d (digits only, no injection risk); a limit <= 0 lists every
+// track from the offset onward.
+const songsScript = `tell application "Music"
+	set nl to (ASCII character 10)
+	set tb to (ASCII character 9)
+	set out to ""
+	set allTracks to every track of library playlist 1
+	set total to (count of allTracks)
+	set startIdx to %d + 1
+	set lim to %d
+	if lim <= 0 then
+		set endIdx to total
+	else
+		set endIdx to startIdx + lim - 1
+	end if
+	if endIdx > total then set endIdx to total
+	if startIdx <= total then
+		repeat with i from startIdx to endIdx
+			set t to item i of allTracks
+			set out to out & (name of t) & tb & (artist of t) & tb & (album of t) & nl
+		end repeat
+	end if
+	return out
+end tell`
+
+// ErrInvalidPagination is returned by Songs for a negative limit or offset.
+var ErrInvalidPagination = errors.New("invalid pagination")
+
+// Songs lists local-library tracks starting at offset (0-based). A limit <= 0
+// lists every remaining track.
+func (c *Client) Songs(ctx context.Context, limit, offset int) ([]LibraryTrack, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("%w: offset %d must be >= 0", ErrInvalidPagination, offset)
+	}
+	script := fmt.Sprintf(songsScript, offset, limit)
+	out, err := c.runner.Run(ctx, script)
+	if err != nil {
+		return nil, err
+	}
+	return parseLibraryTracks(out), nil
+}
+
+// parseLibraryTracks decodes the tab/newline-delimited output of the search and
+// songs scripts. Rows without exactly three fields are skipped.
+func parseLibraryTracks(out string) []LibraryTrack {
+	if out == "" {
+		return nil
+	}
+	var tracks []LibraryTrack
+	for line := range strings.SplitSeq(out, "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) != 3 {
+			continue
+		}
+		tracks = append(tracks, LibraryTrack{
+			Name:   fields[0],
+			Artist: fields[1],
+			Album:  fields[2],
+		})
+	}
+	return tracks
+}
+
 // Shuffle reports whether shuffle is currently enabled.
 func (c *Client) Shuffle(ctx context.Context) (bool, error) {
 	out, err := c.runner.Run(ctx, `tell application "Music" to shuffle enabled`)
