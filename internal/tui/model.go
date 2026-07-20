@@ -59,6 +59,20 @@ const (
 	tabCount
 )
 
+// inputMode is modeNone during normal browsing; the other modes overlay a
+// prompt on the browser to drive a playlist-management action (issue #28): a
+// text prompt for a new name, a y/n confirm for a destructive action, or a
+// target-playlist picker.
+type inputMode int
+
+const (
+	modeNone inputMode = iota
+	modeCreatePlaylist
+	modeConfirmDeletePlaylist
+	modeConfirmRemoveTrack
+	modeAddToPlaylist
+)
+
 func (t tab) title() string {
 	switch t {
 	case tabPlaylists:
@@ -103,6 +117,14 @@ type nowPlayingMsg struct {
 
 // actionMsg carries the result of a playback control action (play/pause/next/previous/...).
 type actionMsg struct {
+	err error
+}
+
+// libraryActionMsg carries the result of a playlist-mutating action (issue #28)
+// that has no list of its own to reload — currently only adding a song to a
+// playlist. Create/delete/remove instead reload their affected list by
+// returning a playlistsMsg/playlistTracksMsg on success. err populates listErr.
+type libraryActionMsg struct {
 	err error
 }
 
@@ -165,6 +187,14 @@ type Model struct {
 	// listErr holds a browsing-side failure without displacing the now-playing
 	// track/action error.
 	listErr error
+
+	// Playlist management overlays (issue #28). mode is modeNone during normal
+	// browsing; the fields below back the active overlay.
+	mode          inputMode
+	nameInput     string // buffer for the create-playlist text prompt
+	confirmTarget string // playlist name shown in the delete-playlist confirm
+	addSongIndex  int    // library index of the song being added to a playlist
+	pickerCursor  int    // cursor within the add-to-playlist target picker
 }
 
 // New creates a Model that controls Music.app through client.
@@ -223,6 +253,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, fetchAll(m.client)
+	case libraryActionMsg:
+		m.listErr = msg.err
+		return m, nil
 	case playlistsMsg:
 		m.playlistsLoaded = true
 		m.listErr = msg.err
@@ -272,8 +305,53 @@ func (m Model) View() string {
 		m.renderNowPlayingTab(&b)
 	}
 
+	if m.mode != modeNone {
+		m.renderMode(&b)
+	}
+
 	b.WriteString("\n" + dimStyle.Render(m.helpLine()))
 	return b.String()
+}
+
+// renderMode draws the active playlist-management overlay below the tab content.
+func (m Model) renderMode(b *strings.Builder) {
+	b.WriteString("\n")
+	switch m.mode {
+	case modeCreatePlaylist:
+		// The trailing block is a simple text cursor for the inline input.
+		fmt.Fprintf(b, "%s %s\n", titleStyle.Render("New playlist:"), m.nameInput+"▌")
+	case modeConfirmDeletePlaylist:
+		fmt.Fprintf(b, "Delete playlist %q? (y/n)\n", m.confirmTarget)
+	case modeConfirmRemoveTrack:
+		name := ""
+		if m.trackCursor < len(m.playlistTracks) {
+			name = m.playlistTracks[m.trackCursor].Name
+		}
+		fmt.Fprintf(b, "Remove %q from %q? (y/n)\n", name, m.openPlaylist)
+	case modeAddToPlaylist:
+		m.renderPicker(b)
+	}
+}
+
+// renderPicker draws the target-playlist list for adding the selected song.
+func (m Model) renderPicker(b *strings.Builder) {
+	song := ""
+	if m.addSongIndex < len(m.songs) {
+		song = m.songs[m.addSongIndex].Name
+	}
+	fmt.Fprintf(b, "%s\n", titleStyle.Render("Add "+song+" to playlist:"))
+	if !m.playlistsLoaded {
+		b.WriteString("Loading playlists…\n")
+		return
+	}
+	if len(m.playlists) == 0 {
+		b.WriteString("No playlists to add to.\n")
+		return
+	}
+	start, end := listWindow(m.pickerCursor, len(m.playlists))
+	for i := start; i < end; i++ {
+		renderRow(b, m.playlists[i], i == m.pickerCursor)
+	}
 }
 
 func (m Model) renderTabBar() string {
@@ -370,20 +448,34 @@ func renderRow(b *strings.Builder, text string, selected bool) {
 }
 
 func (m Model) helpLine() string {
+	switch m.mode {
+	case modeCreatePlaylist:
+		return "type a name  enter: create  esc: cancel"
+	case modeConfirmDeletePlaylist, modeConfirmRemoveTrack:
+		return "y: confirm  n/esc: cancel"
+	case modeAddToPlaylist:
+		return "↑↓: move  enter: add  esc: cancel"
+	}
 	switch m.tab {
 	case tabPlaylists:
 		if m.openPlaylist != "" {
-			return "↑↓: move  enter: play  esc: back  tab: switch tab  q: quit"
+			return "↑↓: move  enter: play  d: remove  esc: back  tab: switch tab  q: quit"
 		}
-		return "↑↓: move  enter: open  r: reload  tab: switch tab  q: quit"
+		return "↑↓: move  enter: open  a: new  d: delete  r: reload  tab: switch tab  q: quit"
 	case tabSongs:
-		return "↑↓: move  enter: play  r: reload  tab: switch tab  q: quit"
+		return "↑↓: move  enter: play  a: add to playlist  r: reload  tab: switch tab  q: quit"
 	default:
 		return "space: play/pause  n: next  p: prev  s: shuffle  c: repeat  +/-: volume  tab: switch tab  q: quit"
 	}
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// An open overlay captures every key (so typed text isn't read as a global
+	// shortcut, and q doesn't quit mid-prompt) until it's confirmed or canceled.
+	if m.mode != modeNone {
+		return m.handleModeKey(msg)
+	}
+
 	switch msg.String() {
 	case "q", "ctrl+c":
 		m.quitting = true
@@ -476,6 +568,89 @@ func (m Model) ensureTabLoaded() tea.Cmd {
 	return nil
 }
 
+// handleModeKey dispatches a key to the handler for the active overlay.
+func (m Model) handleModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch m.mode {
+	case modeCreatePlaylist:
+		return m.handleCreatePlaylistKey(msg)
+	case modeConfirmDeletePlaylist:
+		return m.handleConfirmDeleteKey(msg)
+	case modeConfirmRemoveTrack:
+		return m.handleConfirmRemoveTrackKey(msg)
+	case modeAddToPlaylist:
+		return m.handleAddToPlaylistKey(msg)
+	}
+	return m, nil
+}
+
+func (m Model) handleCreatePlaylistKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc, tea.KeyCtrlC:
+		m.mode = modeNone
+		m.nameInput = ""
+	case tea.KeyEnter:
+		name := strings.TrimSpace(m.nameInput)
+		m.mode = modeNone
+		m.nameInput = ""
+		if name == "" {
+			return m, nil
+		}
+		return m, createPlaylist(m.client, name)
+	case tea.KeyBackspace:
+		m.nameInput = trimLastRune(m.nameInput)
+	case tea.KeySpace:
+		m.nameInput += " "
+	case tea.KeyRunes:
+		m.nameInput += string(msg.Runes)
+	}
+	return m, nil
+}
+
+func (m Model) handleConfirmDeleteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		name := m.confirmTarget
+		m.mode = modeNone
+		m.confirmTarget = ""
+		return m, deletePlaylist(m.client, name)
+	case "n", "N", "esc":
+		m.mode = modeNone
+		m.confirmTarget = ""
+	}
+	return m, nil
+}
+
+func (m Model) handleConfirmRemoveTrackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		playlist, index := m.openPlaylist, m.trackCursor
+		m.mode = modeNone
+		return m, removePlaylistTrack(m.client, playlist, index)
+	case "n", "N", "esc":
+		m.mode = modeNone
+	}
+	return m, nil
+}
+
+func (m Model) handleAddToPlaylistKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		m.pickerCursor = moveCursor(m.pickerCursor, -1, len(m.playlists))
+	case "down", "j":
+		m.pickerCursor = moveCursor(m.pickerCursor, 1, len(m.playlists))
+	case "enter":
+		if len(m.playlists) == 0 {
+			return m, nil
+		}
+		index, target := m.addSongIndex, m.playlists[m.pickerCursor]
+		m.mode = modeNone
+		return m, addSongToPlaylist(m.client, index, target)
+	case "esc":
+		m.mode = modeNone
+	}
+	return m, nil
+}
+
 func (m Model) handlePlaylistsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Drilled into a playlist: navigate and play its tracks.
 	if m.openPlaylist != "" {
@@ -492,6 +667,11 @@ func (m Model) handlePlaylistsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, doAction(func(ctx context.Context) error {
 				return m.client.PlayPlaylistTrack(ctx, name, index)
 			})
+		case "d":
+			if len(m.playlistTracks) == 0 {
+				return m, nil
+			}
+			m.mode = modeConfirmRemoveTrack
 		case "esc", "backspace", "left", "h":
 			m.openPlaylist = ""
 			m.playlistTracks = nil
@@ -513,6 +693,15 @@ func (m Model) handlePlaylistsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.playlistTracks = nil
 		m.trackCursor = 0
 		return m, fetchPlaylistTracks(m.client, m.openPlaylist)
+	case "a":
+		m.mode = modeCreatePlaylist
+		m.nameInput = ""
+	case "d":
+		if len(m.playlists) == 0 {
+			return m, nil
+		}
+		m.mode = modeConfirmDeletePlaylist
+		m.confirmTarget = m.playlists[m.playlistCursor]
 	case "r":
 		m.playlistsLoaded = false
 		return m, fetchPlaylists(m.client)
@@ -534,6 +723,18 @@ func (m Model) handleSongsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, doAction(func(ctx context.Context) error {
 			return m.client.PlaySong(ctx, index)
 		})
+	case "a":
+		if len(m.songs) == 0 {
+			return m, nil
+		}
+		m.mode = modeAddToPlaylist
+		m.addSongIndex = m.songCursor
+		m.pickerCursor = 0
+		// The picker needs the playlist list; load it lazily if the Playlists
+		// tab hasn't been visited yet.
+		if !m.playlistsLoaded {
+			return m, fetchPlaylists(m.client)
+		}
 	case "r":
 		m.songsLoaded = false
 		return m, fetchSongs(m.client)
@@ -548,6 +749,16 @@ func trackIdentity(t *musicapp.Track) string {
 		return ""
 	}
 	return t.Name + "\x00" + t.Artist + "\x00" + t.Album
+}
+
+// trimLastRune drops the final rune of s, backing over a full multi-byte
+// character so backspace in the name prompt deletes one glyph, not one byte.
+func trimLastRune(s string) string {
+	r := []rune(s)
+	if len(r) == 0 {
+		return s
+	}
+	return string(r[:len(r)-1])
 }
 
 func onOff(b bool) string {
@@ -687,6 +898,57 @@ func fetchPlaylistTracks(c *musicapp.Client, name string) tea.Cmd {
 		defer cancel()
 		tracks, err := c.PlaylistTracks(ctx, name)
 		return playlistTracksMsg{playlist: name, tracks: tracks, err: err}
+	}
+}
+
+// createPlaylist and deletePlaylist mutate the playlist set, then reload it so
+// the change shows immediately; on success they return a playlistsMsg (reusing
+// the list-reload path), on failure a libraryActionMsg carrying the error.
+func createPlaylist(c *musicapp.Client, name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), listTimeout)
+		defer cancel()
+		if err := c.CreatePlaylist(ctx, name); err != nil {
+			return libraryActionMsg{err: err}
+		}
+		playlists, err := c.Playlists(ctx)
+		return playlistsMsg{playlists: playlists, err: err}
+	}
+}
+
+func deletePlaylist(c *musicapp.Client, name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), listTimeout)
+		defer cancel()
+		if err := c.DeletePlaylist(ctx, name); err != nil {
+			return libraryActionMsg{err: err}
+		}
+		playlists, err := c.Playlists(ctx)
+		return playlistsMsg{playlists: playlists, err: err}
+	}
+}
+
+// removePlaylistTrack removes a track from a playlist, then reloads that
+// playlist's tracks so the removal shows immediately.
+func removePlaylistTrack(c *musicapp.Client, playlist string, index int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), listTimeout)
+		defer cancel()
+		if err := c.RemovePlaylistTrack(ctx, playlist, index); err != nil {
+			return libraryActionMsg{err: err}
+		}
+		tracks, err := c.PlaylistTracks(ctx, playlist)
+		return playlistTracksMsg{playlist: playlist, tracks: tracks, err: err}
+	}
+}
+
+// addSongToPlaylist copies a library song into a playlist. Nothing visible in
+// the Songs tab changes, so it only reports success/failure via libraryActionMsg.
+func addSongToPlaylist(c *musicapp.Client, index int, playlist string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+		defer cancel()
+		return libraryActionMsg{err: c.AddSongToPlaylist(ctx, index, playlist)}
 	}
 }
 

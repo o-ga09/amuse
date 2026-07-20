@@ -416,6 +416,60 @@ func (c *Client) PlaySong(ctx context.Context, index int) error {
 	return err
 }
 
+// ErrEmptyPlaylistName is returned by CreatePlaylist for a blank name.
+var ErrEmptyPlaylistName = errors.New("empty playlist name")
+
+// CreatePlaylist creates a new, empty playlist with the given name. The name is
+// free-text and is escaped before interpolation; see escapeAppleScriptString.
+// Music.app allows duplicate playlist names, so this always adds a new one.
+func (c *Client) CreatePlaylist(ctx context.Context, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return ErrEmptyPlaylistName
+	}
+	script := fmt.Sprintf(`tell application "Music" to make new playlist with properties {name:"%s"}`,
+		escapeAppleScriptString(name))
+	_, err := c.runner.Run(ctx, script)
+	return err
+}
+
+// DeletePlaylist deletes the first playlist whose name matches. The name is
+// escaped; see escapeAppleScriptString.
+func (c *Client) DeletePlaylist(ctx context.Context, name string) error {
+	script := fmt.Sprintf(`tell application "Music" to delete (first playlist whose name is "%s")`,
+		escapeAppleScriptString(name))
+	_, err := c.runner.Run(ctx, script)
+	return err
+}
+
+// AddSongToPlaylist copies the library track at the given 0-based position (the
+// same ordering as Songs/PlaySong) into the named playlist. The playlist name is
+// escaped; the index is an int, so %d yields digits only and can't inject syntax.
+func (c *Client) AddSongToPlaylist(ctx context.Context, index int, playlist string) error {
+	if index < 0 {
+		return fmt.Errorf("%w: index %d must be >= 0", ErrInvalidPagination, index)
+	}
+	script := fmt.Sprintf(
+		`tell application "Music" to duplicate (track %d of library playlist 1) to (first playlist whose name is "%s")`,
+		index+1, escapeAppleScriptString(playlist))
+	_, err := c.runner.Run(ctx, script)
+	return err
+}
+
+// RemovePlaylistTrack deletes the track at the given 0-based position (the same
+// ordering PlaylistTracks returns) from the named playlist. Deleting a track
+// from a user playlist only removes it from that playlist, not the library. The
+// name is escaped; the index is an int, so %d can't inject syntax.
+func (c *Client) RemovePlaylistTrack(ctx context.Context, playlist string, index int) error {
+	if index < 0 {
+		return fmt.Errorf("%w: index %d must be >= 0", ErrInvalidPagination, index)
+	}
+	script := fmt.Sprintf(
+		`tell application "Music" to delete (track %d of (first playlist whose name is "%s"))`,
+		index+1, escapeAppleScriptString(playlist))
+	_, err := c.runner.Run(ctx, script)
+	return err
+}
+
 // Shuffle reports whether shuffle is currently enabled.
 func (c *Client) Shuffle(ctx context.Context) (bool, error) {
 	out, err := c.runner.Run(ctx, `tell application "Music" to shuffle enabled`)

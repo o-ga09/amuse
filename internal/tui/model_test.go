@@ -464,12 +464,19 @@ func key(s string) tea.KeyMsg {
 
 func updateModel(t *testing.T, m Model, msg tea.Msg) Model {
 	t.Helper()
-	got, _ := m.Update(msg)
+	mm, _ := updateCmd(t, m, msg)
+	return mm
+}
+
+// updateCmd is updateModel for callers that also need the returned command.
+func updateCmd(t *testing.T, m Model, msg tea.Msg) (Model, tea.Cmd) {
+	t.Helper()
+	got, cmd := m.Update(msg)
 	mm, ok := got.(Model)
 	if !ok {
 		t.Fatalf("Update returned %T, want Model", got)
 	}
-	return mm
+	return mm, cmd
 }
 
 func TestModel_Update_TabCycles(t *testing.T) {
@@ -634,6 +641,185 @@ func TestModel_TransportKeysWorkWhileBrowsing(t *testing.T) {
 	}
 }
 
+// recordingRunner keeps every script it runs, so tests can assert on a mutating
+// call even when a later reload call would overwrite stubRunner's single slot.
+type recordingRunner struct {
+	output  string
+	err     error
+	scripts []string
+}
+
+func (r *recordingRunner) Run(_ context.Context, script string) (string, error) {
+	r.scripts = append(r.scripts, script)
+	return r.output, r.err
+}
+
+func (r *recordingRunner) joined() string { return strings.Join(r.scripts, "\n---\n") }
+
+func TestModel_PlaylistsTab_CreatePlaylistFlow(t *testing.T) {
+	r := &recordingRunner{}
+	m := New(musicapp.NewClient(r))
+	m.tab = tabPlaylists
+	m.playlistsLoaded = true
+	m.playlists = []string{"Chill"}
+
+	m = updateModel(t, m, key("a"))
+	if m.mode != modeCreatePlaylist {
+		t.Fatalf("mode = %v, want modeCreatePlaylist after 'a'", m.mode)
+	}
+
+	// Typing builds the name; 'q' must not quit while the prompt is open.
+	m = updateModel(t, m, key("J"))
+	m = updateModel(t, m, key("a"))
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	m = updateModel(t, m, key("z"))
+	if m.quitting {
+		t.Fatal("quitting = true, want the create prompt to capture keys")
+	}
+	if m.nameInput != "Ja z" {
+		t.Fatalf("nameInput = %q, want %q", m.nameInput, "Ja z")
+	}
+
+	m, cmd := updateCmd(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mode != modeNone {
+		t.Fatalf("mode = %v, want modeNone after enter", m.mode)
+	}
+	if cmd == nil {
+		t.Fatal("expected a create command")
+	}
+	cmd()
+	if !strings.Contains(r.joined(), `make new playlist with properties {name:"Ja z"}`) {
+		t.Errorf("scripts = %q, want a make-new-playlist call", r.joined())
+	}
+}
+
+func TestModel_PlaylistsTab_CreatePlaylistEscCancels(t *testing.T) {
+	r := &recordingRunner{}
+	m := New(musicapp.NewClient(r))
+	m.tab = tabPlaylists
+	m.playlistsLoaded = true
+	m.playlists = []string{"Chill"}
+
+	m = updateModel(t, m, key("a"))
+	m = updateModel(t, m, key("x"))
+	m, cmd := updateCmd(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.mode != modeNone {
+		t.Errorf("mode = %v, want modeNone after esc", m.mode)
+	}
+	if m.nameInput != "" {
+		t.Errorf("nameInput = %q, want cleared after esc", m.nameInput)
+	}
+	if cmd != nil {
+		t.Error("esc should not run any command")
+	}
+}
+
+func TestModel_PlaylistsTab_DeletePlaylistFlow(t *testing.T) {
+	r := &recordingRunner{}
+	m := New(musicapp.NewClient(r))
+	m.tab = tabPlaylists
+	m.playlistsLoaded = true
+	m.playlists = []string{"Chill", "Workout"}
+
+	m = updateModel(t, m, key("j")) // -> Workout
+	m = updateModel(t, m, key("d"))
+	if m.mode != modeConfirmDeletePlaylist || m.confirmTarget != "Workout" {
+		t.Fatalf("mode = %v, target = %q, want a delete confirm for Workout", m.mode, m.confirmTarget)
+	}
+
+	// 'n' cancels without touching Music.app.
+	mCancel := updateModel(t, m, key("n"))
+	if mCancel.mode != modeNone || len(r.scripts) != 0 {
+		t.Fatalf("'n' should cancel; mode = %v, scripts = %v", mCancel.mode, r.scripts)
+	}
+
+	m, cmd := updateCmd(t, m, key("y"))
+	if m.mode != modeNone {
+		t.Fatalf("mode = %v, want modeNone after confirm", m.mode)
+	}
+	if cmd == nil {
+		t.Fatal("expected a delete command")
+	}
+	cmd()
+	if !strings.Contains(r.joined(), `delete (first playlist whose name is "Workout")`) {
+		t.Errorf("scripts = %q, want a delete-playlist call for Workout", r.joined())
+	}
+}
+
+func TestModel_PlaylistTracks_RemoveTrackFlow(t *testing.T) {
+	r := &recordingRunner{}
+	m := New(musicapp.NewClient(r))
+	m.tab = tabPlaylists
+	m.playlistsLoaded = true
+	m.playlists = []string{"Workout"}
+	m.openPlaylist = "Workout"
+	m.playlistTracks = []musicapp.LibraryTrack{{Name: "A"}, {Name: "B"}}
+
+	m = updateModel(t, m, key("j")) // -> track B
+	m = updateModel(t, m, key("d"))
+	if m.mode != modeConfirmRemoveTrack {
+		t.Fatalf("mode = %v, want modeConfirmRemoveTrack", m.mode)
+	}
+
+	m, cmd := updateCmd(t, m, key("y"))
+	if m.mode != modeNone {
+		t.Fatalf("mode = %v, want modeNone after confirm", m.mode)
+	}
+	if cmd == nil {
+		t.Fatal("expected a remove command")
+	}
+	cmd()
+	if !strings.Contains(r.joined(), `delete (track 2 of (first playlist whose name is "Workout"))`) {
+		t.Errorf("scripts = %q, want a delete of track 2 of Workout", r.joined())
+	}
+}
+
+func TestModel_SongsTab_AddToPlaylistFlow(t *testing.T) {
+	r := &recordingRunner{}
+	m := New(musicapp.NewClient(r))
+	m.tab = tabSongs
+	m.songsLoaded = true
+	m.songs = []musicapp.LibraryTrack{{Name: "A"}, {Name: "B"}}
+
+	// 'a' opens the picker and, since playlists aren't loaded yet, fetches them.
+	m = updateModel(t, m, key("j")) // -> song B
+	m, cmd := updateCmd(t, m, key("a"))
+	if m.mode != modeAddToPlaylist || m.addSongIndex != 1 {
+		t.Fatalf("mode = %v, addSongIndex = %d, want add mode for song 1", m.mode, m.addSongIndex)
+	}
+	if cmd == nil {
+		t.Fatal("expected a fetch-playlists command when playlists aren't loaded")
+	}
+
+	m = updateModel(t, m, playlistsMsg{playlists: []string{"Chill", "Workout"}})
+	m = updateModel(t, m, key("j")) // pick Workout
+
+	m, cmd = updateCmd(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mode != modeNone {
+		t.Fatalf("mode = %v, want modeNone after enter", m.mode)
+	}
+	if cmd == nil {
+		t.Fatal("expected an add command")
+	}
+	cmd()
+	want := `duplicate (track 2 of library playlist 1) to (first playlist whose name is "Workout")`
+	if !strings.Contains(r.joined(), want) {
+		t.Errorf("scripts = %q, want %q", r.joined(), want)
+	}
+}
+
+func TestModel_Update_LibraryActionMsg_SetsListErr(t *testing.T) {
+	m := New(musicapp.NewClient(&stubRunner{}))
+	boom := errors.New("boom")
+	m = updateModel(t, m, libraryActionMsg{err: boom})
+	if !errors.Is(m.listErr, boom) {
+		t.Errorf("listErr = %v, want %v", m.listErr, boom)
+	}
+	if m.err != nil {
+		t.Errorf("err = %v, want the now-playing error left untouched", m.err)
+	}
+}
+
 func TestModel_View(t *testing.T) {
 	tests := []struct {
 		name string
@@ -654,6 +840,24 @@ func TestModel_View(t *testing.T) {
 			name: "playing track",
 			m:    Model{track: &musicapp.Track{Name: "Song", Artist: "Artist", Album: "Album", State: "playing"}},
 			want: "Song",
+		},
+		{
+			name: "create-playlist prompt",
+			m:    Model{tab: tabPlaylists, playlistsLoaded: true, mode: modeCreatePlaylist, nameInput: "Roadtrip"},
+			want: "Roadtrip",
+		},
+		{
+			name: "delete-playlist confirm",
+			m:    Model{tab: tabPlaylists, playlistsLoaded: true, mode: modeConfirmDeletePlaylist, confirmTarget: "Chill"},
+			want: `Delete playlist "Chill"?`,
+		},
+		{
+			name: "add-to-playlist picker",
+			m: Model{
+				tab: tabSongs, songsLoaded: true, songs: []musicapp.LibraryTrack{{Name: "A"}},
+				mode: modeAddToPlaylist, playlistsLoaded: true, playlists: []string{"Chill"},
+			},
+			want: "Add A to playlist:",
 		},
 	}
 
