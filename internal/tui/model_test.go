@@ -82,9 +82,84 @@ func TestModel_Update_NowPlayingMsg_SetsTrack(t *testing.T) {
 	if mm.track != track {
 		t.Errorf("track = %+v, want %+v", mm.track, track)
 	}
-	if cmd != nil {
-		t.Error("expected no follow-up command")
+	if cmd == nil {
+		t.Error("expected a follow-up command to fetch artwork for the new track")
 	}
+}
+
+func TestModel_Update_NowPlayingMsg_SameTrack_NoArtworkRefetch(t *testing.T) {
+	track := &musicapp.Track{Name: "Song", Artist: "Artist", Album: "Album", State: "playing"}
+	m := New(musicapp.NewClient(&stubRunner{}))
+	m.track = track
+	m.artwork = "cached-thumbnail"
+
+	// Same identity, only the state field differs (paused vs playing) - this
+	// must not trigger a refetch.
+	got, cmd := m.Update(nowPlayingMsg{track: &musicapp.Track{Name: "Song", Artist: "Artist", Album: "Album", State: "paused"}})
+
+	mm, ok := got.(Model)
+	if !ok {
+		t.Fatalf("Update returned %T, want Model", got)
+	}
+	if cmd != nil {
+		t.Error("expected no follow-up command when the track identity is unchanged")
+	}
+	if mm.artwork != "cached-thumbnail" {
+		t.Errorf("artwork = %q, want cached thumbnail to be left in place", mm.artwork)
+	}
+}
+
+func TestModel_Update_NowPlayingMsg_TrackCleared_ClearsArtwork(t *testing.T) {
+	m := New(musicapp.NewClient(&stubRunner{}))
+	m.track = &musicapp.Track{Name: "Song"}
+	m.artwork = "stale-thumbnail"
+
+	got, cmd := m.Update(nowPlayingMsg{})
+
+	mm, ok := got.(Model)
+	if !ok {
+		t.Fatalf("Update returned %T, want Model", got)
+	}
+	if cmd != nil {
+		t.Error("expected no follow-up command when nothing is playing")
+	}
+	if mm.artwork != "" {
+		t.Errorf("artwork = %q, want cleared", mm.artwork)
+	}
+}
+
+func TestModel_Update_ArtworkMsg(t *testing.T) {
+	t.Run("success sets the rendered thumbnail", func(t *testing.T) {
+		m := New(musicapp.NewClient(&stubRunner{}))
+
+		got, cmd := m.Update(artworkMsg{rendered: "thumbnail"})
+
+		mm, ok := got.(Model)
+		if !ok {
+			t.Fatalf("Update returned %T, want Model", got)
+		}
+		if mm.artwork != "thumbnail" {
+			t.Errorf("artwork = %q, want %q", mm.artwork, "thumbnail")
+		}
+		if cmd != nil {
+			t.Error("expected no follow-up command")
+		}
+	})
+
+	t.Run("error leaves the last known thumbnail in place", func(t *testing.T) {
+		m := New(musicapp.NewClient(&stubRunner{}))
+		m.artwork = "old-thumbnail"
+
+		got, _ := m.Update(artworkMsg{err: errors.New("boom")})
+
+		mm, ok := got.(Model)
+		if !ok {
+			t.Fatalf("Update returned %T, want Model", got)
+		}
+		if mm.artwork != "old-thumbnail" {
+			t.Errorf("artwork = %q, want unchanged %q", mm.artwork, "old-thumbnail")
+		}
+	})
 }
 
 func TestModel_Update_ActionMsg(t *testing.T) {
