@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 )
 
 // ErrNothingPlaying is returned by NowPlaying when Music.app's player state is stopped.
 var ErrNothingPlaying = errors.New("nothing playing")
+
+// ErrNoArtwork is returned by Artwork when the current track has no artwork.
+var ErrNoArtwork = errors.New("no artwork")
 
 // Track describes the currently playing (or paused) track.
 type Track struct {
@@ -83,6 +87,63 @@ func (c *Client) NowPlaying(ctx context.Context) (*Track, error) {
 		Album:  fields[2],
 		State:  fields[3],
 	}, nil
+}
+
+// artworkScript writes the current track's artwork, in its original file
+// format (JPEG/PNG/etc.), to the given path. osascript's stdout mangles raw
+// binary data, so the script writes it to a file itself and returns a status
+// word instead; the caller reads the bytes back off disk.
+const artworkScript = `tell application "Music"
+	if player state is stopped then
+		return "stopped"
+	end if
+	if (count of artworks of current track) is 0 then
+		return "none"
+	end if
+	set artData to raw data of artwork 1 of current track
+	set fileRef to open for access (POSIX file "%s") with write permission
+	set eof fileRef to 0
+	write artData to fileRef
+	close access fileRef
+	return "ok"
+end tell`
+
+// Artwork returns the current track's artwork as raw, undecoded image bytes
+// (JPEG, PNG, etc., whatever Music.app stored them as).
+func (c *Client) Artwork(ctx context.Context) ([]byte, error) {
+	tmp, err := os.CreateTemp("", "amuse-artwork-*.bin")
+	if err != nil {
+		return nil, fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if closeErr := tmp.Close(); closeErr != nil {
+		_ = os.Remove(tmpPath)
+		return nil, fmt.Errorf("close temp file: %w", closeErr)
+	}
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	// tmpPath comes from os.CreateTemp, never from external input, so
+	// interpolating it into the script can't inject AppleScript syntax.
+	out, err := c.runner.Run(ctx, fmt.Sprintf(artworkScript, tmpPath))
+	if err != nil {
+		return nil, err
+	}
+
+	switch out {
+	case "stopped":
+		return nil, ErrNothingPlaying
+	case "none":
+		return nil, ErrNoArtwork
+	case "ok":
+		// tmpPath is the os.CreateTemp path from above, never external input.
+		data, readErr := os.ReadFile(tmpPath) // #nosec G304
+		if readErr != nil {
+			return nil, fmt.Errorf("read artwork file: %w", readErr)
+		}
+		return data, nil
+	default:
+		return nil, fmt.Errorf("unexpected osascript output: %q", out)
+	}
 }
 
 // Shuffle reports whether shuffle is currently enabled.

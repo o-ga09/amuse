@@ -35,6 +35,14 @@ type actionMsg struct {
 	err error
 }
 
+// artworkMsg carries the result of an artwork fetch+render. Like
+// shuffle/repeat/volume, a fetch error just leaves the last-shown thumbnail
+// in place rather than displacing the track/action error.
+type artworkMsg struct {
+	rendered string
+	err      error
+}
+
 // shuffleMsg, repeatMsg, and volumeMsg carry the result of their respective
 // status fetches. A fetch error just leaves the last known value on screen
 // rather than displacing the (more important) track/action error, so err is
@@ -59,6 +67,7 @@ type volumeMsg struct {
 type Model struct {
 	client   *musicapp.Client
 	track    *musicapp.Track
+	artwork  string
 	shuffle  bool
 	repeat   musicapp.RepeatMode
 	volume   int
@@ -80,8 +89,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case nowPlayingMsg:
+		trackChanged := trackIdentity(m.track) != trackIdentity(msg.track)
 		m.track = msg.track
 		m.err = msg.err
+		if !trackChanged {
+			return m, nil
+		}
+		if msg.track == nil {
+			m.artwork = ""
+			return m, nil
+		}
+		return m, fetchArtwork(m.client)
+	case artworkMsg:
+		if msg.err == nil {
+			m.artwork = msg.rendered
+		}
 		return m, nil
 	case shuffleMsg:
 		if msg.err == nil {
@@ -115,6 +137,10 @@ func (m Model) View() string {
 
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("amuse") + "\n\n")
+
+	if m.artwork != "" {
+		b.WriteString(m.artwork + "\n")
+	}
 
 	switch {
 	case m.err != nil:
@@ -168,6 +194,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, fetchAll(m.client)
 	}
 	return m, nil
+}
+
+// trackIdentity distinguishes tracks for the purpose of deciding whether to
+// refetch artwork; State changes (playing/paused) don't count as a new track.
+func trackIdentity(t *musicapp.Track) string {
+	if t == nil {
+		return ""
+	}
+	return t.Name + "\x00" + t.Artist + "\x00" + t.Album
 }
 
 func onOff(b bool) string {
@@ -238,6 +273,31 @@ func fetchVolume(c *musicapp.Client) tea.Cmd {
 		defer cancel()
 		level, err := c.Volume(ctx)
 		return volumeMsg{level: level, err: err}
+	}
+}
+
+func fetchArtwork(c *musicapp.Client) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+		defer cancel()
+
+		data, err := c.Artwork(ctx)
+		if err != nil {
+			if errors.Is(err, musicapp.ErrNoArtwork) || errors.Is(err, musicapp.ErrNothingPlaying) {
+				return artworkMsg{}
+			}
+			return artworkMsg{err: err}
+		}
+
+		render := renderArtwork
+		if kittyGraphicsAvailable() {
+			render = renderArtworkKitty
+		}
+		rendered, err := render(data)
+		if err != nil {
+			return artworkMsg{err: err}
+		}
+		return artworkMsg{rendered: rendered}
 	}
 }
 

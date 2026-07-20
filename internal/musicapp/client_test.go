@@ -1,8 +1,11 @@
 package musicapp
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -16,6 +19,28 @@ type fakeRunner struct {
 func (f *fakeRunner) Run(_ context.Context, script string) (string, error) {
 	f.script = script
 	return f.output, f.err
+}
+
+// funcRunner lets a test observe (and act on) the exact script a call
+// produces, which Artwork's tests need in order to drop bytes at the temp
+// path the script embeds before reporting success.
+type funcRunner struct {
+	fn func(script string) (string, error)
+}
+
+func (f *funcRunner) Run(_ context.Context, script string) (string, error) {
+	return f.fn(script)
+}
+
+var artworkPathPattern = regexp.MustCompile(`POSIX file "([^"]+)"`)
+
+func extractArtworkPath(t *testing.T, script string) string {
+	t.Helper()
+	m := artworkPathPattern.FindStringSubmatch(script)
+	if m == nil {
+		t.Fatalf("script does not contain a POSIX file path: %q", script)
+	}
+	return m[1]
 }
 
 func TestClient_PlaybackActions(t *testing.T) {
@@ -217,6 +242,69 @@ func TestClient_SetRepeat(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestClient_Artwork(t *testing.T) {
+	t.Run("returns raw bytes and cleans up the temp file", func(t *testing.T) {
+		want := []byte{0x89, 'P', 'N', 'G', 1, 2, 3, 4}
+		var path string
+		r := &funcRunner{fn: func(script string) (string, error) {
+			path = extractArtworkPath(t, script)
+			if err := os.WriteFile(path, want, 0o600); err != nil {
+				t.Fatalf("write test artwork: %v", err)
+			}
+			return "ok", nil
+		}}
+		c := NewClient(r)
+
+		got, err := c.Artwork(t.Context())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("Artwork() = %v, want %v", got, want)
+		}
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Errorf("expected temp file %q to be removed", path)
+		}
+	})
+
+	t.Run("nothing playing", func(t *testing.T) {
+		r := &fakeRunner{output: "stopped"}
+		c := NewClient(r)
+
+		if _, err := c.Artwork(t.Context()); !errors.Is(err, ErrNothingPlaying) {
+			t.Errorf("err = %v, want %v", err, ErrNothingPlaying)
+		}
+	})
+
+	t.Run("no artwork on track", func(t *testing.T) {
+		r := &fakeRunner{output: "none"}
+		c := NewClient(r)
+
+		if _, err := c.Artwork(t.Context()); !errors.Is(err, ErrNoArtwork) {
+			t.Errorf("err = %v, want %v", err, ErrNoArtwork)
+		}
+	})
+
+	t.Run("propagates runner error", func(t *testing.T) {
+		wantErr := errors.New("boom")
+		r := &fakeRunner{err: wantErr}
+		c := NewClient(r)
+
+		if _, err := c.Artwork(t.Context()); !errors.Is(err, wantErr) {
+			t.Errorf("err = %v, want %v", err, wantErr)
+		}
+	})
+
+	t.Run("unexpected output", func(t *testing.T) {
+		r := &fakeRunner{output: "huh"}
+		c := NewClient(r)
+
+		if _, err := c.Artwork(t.Context()); err == nil {
+			t.Fatal("expected an error")
+		}
+	})
 }
 
 func TestClient_Volume(t *testing.T) {
