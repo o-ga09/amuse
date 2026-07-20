@@ -37,6 +37,9 @@ amuse next
 amuse prev
 amuse now        # show the currently playing track
 
+amuse search <query>   # search the local library; prints name<TAB>artist<TAB>album per match
+amuse songs            # list local library tracks (--limit 50 --offset 0; --limit 0 for all)
+
 amuse shuffle    # get shuffle state
 amuse shuffle on
 amuse repeat     # get repeat mode
