@@ -262,6 +262,12 @@ func TestClient_Songs(t *testing.T) {
 		if !strings.Contains(r.script, "set lim to 10") {
 			t.Errorf("limit not interpolated: %q", r.script)
 		}
+		// Guard against reintroducing the whole-library materialization that
+		// SIGKILLed osascript on large libraries; the script must bound its read
+		// to the requested window instead.
+		if strings.Contains(r.script, "every track of library playlist 1") {
+			t.Errorf("script materializes the whole library, want a bounded read: %q", r.script)
+		}
 	})
 
 	t.Run("rejects a negative offset without running a script", func(t *testing.T) {

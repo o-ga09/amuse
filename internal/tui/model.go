@@ -17,6 +17,11 @@ import (
 
 const actionTimeout = 5 * time.Second
 
+// listTimeout is longer than actionTimeout because listing playlists or a page
+// of library tracks reads across the Apple event boundary and can take several
+// seconds on a large library; a 5s cap SIGKILLs osascript mid-read.
+const listTimeout = 30 * time.Second
+
 // refreshInterval is how often the TUI polls Music.app so that changes made
 // outside the TUI (auto-advance to the next track, or playback controlled from
 // Music.app directly) show up without user input. Each tick spawns a fresh set
@@ -24,12 +29,19 @@ const actionTimeout = 5 * time.Second
 // a var rather than a const so tests can shorten it.
 var refreshInterval = time.Second
 
+// brandColor is the "amuse" wordmark's magenta (see banner.go); the active tab
+// picks it up so the selected tab reads as part of the same brand.
+const brandColor = lipgloss.Color("212")
+
 var (
-	titleStyle     = lipgloss.NewStyle().Bold(true)
-	dimStyle       = lipgloss.NewStyle().Faint(true)
-	errStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	activeTabStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	cursorStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	titleStyle = lipgloss.NewStyle().Bold(true)
+	dimStyle   = lipgloss.NewStyle().Faint(true)
+	errStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	// activeTabStyle fills the selected tab with the brand color; black text
+	// keeps it readable on the light magenta background.
+	activeTabStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(brandColor).Padding(0, 1)
+	inactiveTabStyle = lipgloss.NewStyle().Faint(true).Padding(0, 1)
+	cursorStyle      = lipgloss.NewStyle().Bold(true).Foreground(brandColor)
 )
 
 // listVisibleRows caps how many list entries are shown at once; the cursor
@@ -269,9 +281,9 @@ func (m Model) renderTabBar() string {
 	for i := range int(tabCount) {
 		t := tab(i)
 		if t == m.tab {
-			parts = append(parts, activeTabStyle.Render("["+t.title()+"]"))
+			parts = append(parts, activeTabStyle.Render(t.title()))
 		} else {
-			parts = append(parts, dimStyle.Render(" "+t.title()+" "))
+			parts = append(parts, inactiveTabStyle.Render(t.title()))
 		}
 	}
 	return strings.Join(parts, " ")
@@ -662,7 +674,7 @@ func fetchArtwork(c *musicapp.Client) tea.Cmd {
 
 func fetchPlaylists(c *musicapp.Client) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), listTimeout)
 		defer cancel()
 		playlists, err := c.Playlists(ctx)
 		return playlistsMsg{playlists: playlists, err: err}
@@ -671,7 +683,7 @@ func fetchPlaylists(c *musicapp.Client) tea.Cmd {
 
 func fetchPlaylistTracks(c *musicapp.Client, name string) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), listTimeout)
 		defer cancel()
 		tracks, err := c.PlaylistTracks(ctx, name)
 		return playlistTracksMsg{playlist: name, tracks: tracks, err: err}
@@ -680,7 +692,7 @@ func fetchPlaylistTracks(c *musicapp.Client, name string) tea.Cmd {
 
 func fetchSongs(c *musicapp.Client) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), listTimeout)
 		defer cancel()
 		songs, err := c.Songs(ctx, songsPageSize, 0)
 		return songsMsg{songs: songs, err: err}

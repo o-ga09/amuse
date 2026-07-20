@@ -226,12 +226,25 @@ func (c *Client) Search(ctx context.Context, query string) ([]LibraryTrack, erro
 // songsScript lists library tracks from a 1-based offset. limit and offset are
 // interpolated as %d (digits only, no injection risk); a limit <= 0 lists every
 // track from the offset onward.
+//
+// Crucially it never materializes `every track` of the library: on a large
+// library that pulls tens of thousands of track references across the Apple
+// event boundary and blows past the caller's timeout (osascript gets SIGKILLed,
+// surfacing as "signal: killed"). Instead it bounds the work to the requested
+// window and reads each property straight off the range specifier
+// (`name of (tracks m thru n of pl)`), which Music.app answers as one bulk Apple
+// event per property — orders of magnitude faster than iterating track-by-track,
+// and, unlike reading properties off an intermediate resolved list, it works for
+// iCloud/Apple Music "shared track"s too.
+//
+// A range that resolves to a single track is special-cased: AppleScript collapses
+// `name of (tracks n thru n ...)` to a scalar instead of a one-element list, so
+// the window of one is read by index instead.
 const songsScript = `tell application "Music"
 	set nl to (ASCII character 10)
 	set tb to (ASCII character 9)
-	set out to ""
-	set allTracks to every track of library playlist 1
-	set total to (count of allTracks)
+	set pl to library playlist 1
+	set total to (count of tracks of pl)
 	set startIdx to %d + 1
 	set lim to %d
 	if lim <= 0 then
@@ -240,12 +253,18 @@ const songsScript = `tell application "Music"
 		set endIdx to startIdx + lim - 1
 	end if
 	if endIdx > total then set endIdx to total
-	if startIdx <= total then
-		repeat with i from startIdx to endIdx
-			set t to item i of allTracks
-			set out to out & (name of t) & tb & (artist of t) & tb & (album of t) & nl
-		end repeat
+	if startIdx > total then return ""
+	if startIdx is endIdx then
+		set t to track startIdx of pl
+		return (name of t) & tb & (artist of t) & tb & (album of t) & nl
 	end if
+	set theNames to name of (tracks startIdx thru endIdx of pl)
+	set theArtists to artist of (tracks startIdx thru endIdx of pl)
+	set theAlbums to album of (tracks startIdx thru endIdx of pl)
+	set out to ""
+	repeat with i from 1 to (count of theNames)
+		set out to out & (item i of theNames) & tb & (item i of theArtists) & tb & (item i of theAlbums) & nl
+	end repeat
 	return out
 end tell`
 
@@ -330,13 +349,25 @@ func parsePlaylistNames(out string) []string {
 // playlistTracksScript lists the tracks of the first playlist whose name
 // matches. The name is free-text and must be escaped before interpolation; see
 // escapeAppleScriptString.
+// playlistTracksScript reads each property straight off the track-range
+// specifier for the same bulk-Apple-event speed and shared-track compatibility
+// as songsScript (see its comment), with the same single-track special case.
 const playlistTracksScript = `tell application "Music"
 	set nl to (ASCII character 10)
 	set tb to (ASCII character 9)
-	set out to ""
 	set pl to (first playlist whose name is "%s")
-	repeat with t in (every track of pl)
-		set out to out & (name of t) & tb & (artist of t) & tb & (album of t) & nl
+	set total to (count of tracks of pl)
+	if total is 0 then return ""
+	if total is 1 then
+		set t to track 1 of pl
+		return (name of t) & tb & (artist of t) & tb & (album of t) & nl
+	end if
+	set theNames to name of (tracks 1 thru total of pl)
+	set theArtists to artist of (tracks 1 thru total of pl)
+	set theAlbums to album of (tracks 1 thru total of pl)
+	set out to ""
+	repeat with i from 1 to (count of theNames)
+		set out to out & (item i of theNames) & tb & (item i of theArtists) & tb & (item i of theAlbums) & nl
 	end repeat
 	return out
 end tell`
