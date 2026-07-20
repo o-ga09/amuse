@@ -135,7 +135,8 @@ func (c *Client) Artwork(ctx context.Context) ([]byte, error) {
 	case "none":
 		return nil, ErrNoArtwork
 	case "ok":
-		data, readErr := os.ReadFile(tmpPath)
+		// tmpPath is the os.CreateTemp path from above, never external input.
+		data, readErr := os.ReadFile(tmpPath) // #nosec G304
 		if readErr != nil {
 			return nil, fmt.Errorf("read artwork file: %w", readErr)
 		}
