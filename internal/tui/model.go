@@ -664,7 +664,9 @@ func (m Model) handlePlaylistsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			name, index := m.openPlaylist, m.trackCursor
-			return m, doAction(func(ctx context.Context) error {
+			// PlayPlaylistTrack walks the playlist to the chosen track, which
+			// can outlast actionTimeout for tracks deep in a long playlist.
+			return m, doActionTimeout(listTimeout, func(ctx context.Context) error {
 				return m.client.PlayPlaylistTrack(ctx, name, index)
 			})
 		case "d":
@@ -975,8 +977,15 @@ func tick() tea.Cmd {
 }
 
 func doAction(action func(context.Context) error) tea.Cmd {
+	return doActionTimeout(actionTimeout, action)
+}
+
+// doActionTimeout is doAction with a caller-chosen timeout, for actions that can
+// legitimately run longer than actionTimeout (e.g. starting a playlist mid-list,
+// which walks the playlist track by track — see Client.PlayPlaylistTrack).
+func doActionTimeout(timeout time.Duration, action func(context.Context) error) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		return actionMsg{err: action(ctx)}
 	}

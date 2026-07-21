@@ -391,15 +391,23 @@ func TestClient_PlayPlaylist(t *testing.T) {
 }
 
 func TestClient_PlayPlaylistTrack(t *testing.T) {
-	t.Run("interpolates a 1-based index and escapes the name", func(t *testing.T) {
+	t.Run("targets a 1-based index of the escaped playlist and walks in order", func(t *testing.T) {
 		r := &fakeRunner{}
 		c := NewClient(r)
 
 		if err := c.PlayPlaylistTrack(t.Context(), `My "List"`, 2); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !strings.Contains(r.script, `play (track 3 of (first playlist whose name is "My \"List\""))`) {
-			t.Errorf("script = %q, want track 3 of the escaped playlist", r.script)
+		if !strings.Contains(r.script, `set pl to (first playlist whose name is "My \"List\"")`) {
+			t.Errorf("script = %q, want the escaped playlist name", r.script)
+		}
+		if !strings.Contains(r.script, "set target to 3") {
+			t.Errorf("script = %q, want target set to the 1-based index 3", r.script)
+		}
+		// The playlist is played whole for playlist-context continuation, then
+		// walked to the target; a bare "play track N" wouldn't advance in order.
+		if !strings.Contains(r.script, "play pl") {
+			t.Errorf("script = %q, want the whole playlist played for context", r.script)
 		}
 	})
 
