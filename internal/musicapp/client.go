@@ -391,15 +391,73 @@ func (c *Client) PlayPlaylist(ctx context.Context, name string) error {
 	return err
 }
 
-// PlayPlaylistTrack plays a single track of the named playlist, addressed by its
-// 0-based position in the order PlaylistTracks returns. The name is escaped; the
-// index is an int, so %d yields digits only and can't inject syntax.
+// playPlaylistTrackScript starts the named playlist at the track addressed by
+// %d (a 1-based playlist position) and continues in playlist order.
+//
+// Playing a bare track object (`play track N of playlist X`) always leaves
+// Music's *current playlist* set to the library, so playback wouldn't advance
+// through the playlist — it would fall into library order instead (issue: the
+// TUI didn't advance to the next playlist track). The only way to get
+// playlist-context continuation is to `play` the whole playlist, then walk to
+// the target track. Music has no "start playlist at track N" primitive and
+// current playlist/current track are read-only, so walking is unavoidable.
+//
+// The walk is deliberate: `next track`/`previous track` need time to settle, so
+// each step waits for `index of current track` to actually change before firing
+// the next (a self-paced pace that's both faster and more reliable than a fixed
+// delay). It's bidirectional because `play pl` resumes at the playlist's last
+// position, not necessarily track 1, and stops early if a step can't change the
+// index (playlist boundary). Shuffle is forced off — index-order navigation is
+// meaningless with it on. Volume is muted around the walk so the tracks skipped
+// past aren't briefly audible, and restored even on error.
+const playPlaylistTrackScript = `tell application "Music"
+	set pl to (first playlist whose name is "%s")
+	set target to %d
+	set shuffle enabled to false
+	set savedVol to sound volume
+	set sound volume to 0
+	try
+		play pl
+		repeat 30 times
+			if player state is playing then exit repeat
+			delay 0.1
+		end repeat
+		repeat until (index of current track) is target
+			set prev to (index of current track)
+			if prev < target then
+				next track
+			else
+				previous track
+			end if
+			set changed to false
+			repeat 25 times
+				if (index of current track) is not prev then
+					set changed to true
+					exit repeat
+				end if
+				delay 0.1
+			end repeat
+			if not changed then exit repeat
+		end repeat
+		set sound volume to savedVol
+	on error errMsg number errNum
+		set sound volume to savedVol
+		error errMsg number errNum
+	end try
+end tell`
+
+// PlayPlaylistTrack starts the named playlist at the track addressed by its
+// 0-based position in the order PlaylistTracks returns, and continues in
+// playlist order from there. The name is escaped; the index is an int, so %d
+// yields digits only and can't inject syntax. See playPlaylistTrackScript for
+// why this walks the playlist rather than playing the track directly, and note
+// it can take a while for tracks deep in a playlist — call it with a generous
+// context timeout.
 func (c *Client) PlayPlaylistTrack(ctx context.Context, name string, index int) error {
 	if index < 0 {
 		return fmt.Errorf("%w: index %d must be >= 0", ErrInvalidPagination, index)
 	}
-	script := fmt.Sprintf(`tell application "Music" to play (track %d of (first playlist whose name is "%s"))`,
-		index+1, escapeAppleScriptString(name))
+	script := fmt.Sprintf(playPlaylistTrackScript, escapeAppleScriptString(name), index+1)
 	_, err := c.runner.Run(ctx, script)
 	return err
 }

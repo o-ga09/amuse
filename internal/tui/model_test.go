@@ -565,8 +565,8 @@ func TestModel_PlaylistsTab_EnterDrillsInAndPlaysTrack(t *testing.T) {
 		t.Fatal("expected a play command")
 	}
 	cmd()
-	if !strings.Contains(r.script, `play (track 2 of (first playlist whose name is "Workout"))`) {
-		t.Errorf("script = %q, want play of track 2 of Workout", r.script)
+	if !strings.Contains(r.script, `name is "Workout"`) || !strings.Contains(r.script, "set target to 2") {
+		t.Errorf("script = %q, want the Workout playlist walked to track 2", r.script)
 	}
 }
 
