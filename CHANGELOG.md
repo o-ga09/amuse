@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.0.3](https://github.com/o-ga09/amuse/compare/v0.0.2...v0.0.3) - 2026-07-21
+
+### Other Changes
+- [fix] プレイリスト内トラック再生後に次曲へ進まない不具合を修正 by @o-ga09 in https://github.com/o-ga09/amuse/pull/33
+
 ## [v0.0.2](https://github.com/o-ga09/amuse/compare/v0.0.1...v0.0.2) - 2026-07-20
 
 ### New Features 🎉
