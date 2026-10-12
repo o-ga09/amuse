@@ -869,3 +869,97 @@ func TestModel_View(t *testing.T) {
 		})
 	}
 }
+
+func TestModel_SongsTab_FilterNarrowsListAndPlaysOriginalIndex(t *testing.T) {
+	r := &stubRunner{}
+	m := New(musicapp.NewClient(r))
+	m.tab = tabSongs
+	m.songsLoaded = true
+	m.songs = []musicapp.LibraryTrack{
+		{Name: "Alpha", Artist: "X"},
+		{Name: "Beta", Artist: "Y"},
+		{Name: "gamma", Artist: "BETA Band"},
+	}
+
+	m = updateModel(t, m, key("/"))
+	if m.mode != modeFilter {
+		t.Fatalf("mode = %v, want modeFilter", m.mode)
+	}
+	for _, c := range "beta" {
+		m = updateModel(t, m, key(string(c)))
+	}
+	if got := m.visibleSongs(); len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Fatalf("visibleSongs = %v, want [1 2] (case-insensitive name/artist match)", got)
+	}
+
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = updateModel(t, m, key("j"))
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected a play command")
+	}
+	cmd()
+	if !strings.Contains(r.script, "play (track 3 of library playlist 1)") {
+		t.Errorf("script = %q, want the library position of the filtered row", r.script)
+	}
+}
+
+func TestModel_Filter_EscClears(t *testing.T) {
+	m := New(musicapp.NewClient(&stubRunner{}))
+	m.tab = tabPlaylists
+	m.playlistsLoaded = true
+	m.playlists = []string{"Chill", "Workout"}
+
+	m = updateModel(t, m, key("/"))
+	m = updateModel(t, m, key("w"))
+	if got := m.visiblePlaylists(); len(got) != 1 || got[0] != 1 {
+		t.Fatalf("visiblePlaylists = %v, want [1]", got)
+	}
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.filter != "" || m.mode != modeNone {
+		t.Errorf("filter = %q, mode = %v, want cleared", m.filter, m.mode)
+	}
+	if got := m.visiblePlaylists(); len(got) != 2 {
+		t.Errorf("visiblePlaylists = %v, want all", got)
+	}
+}
+
+func TestModel_PlaylistsTab_FilterOpensMatchingPlaylist(t *testing.T) {
+	m := New(musicapp.NewClient(&stubRunner{}))
+	m.tab = tabPlaylists
+	m.playlistsLoaded = true
+	m.playlists = []string{"Chill", "Workout"}
+
+	m = updateModel(t, m, key("/"))
+	m = updateModel(t, m, key("w"))
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.openPlaylist != "Workout" {
+		t.Errorf("openPlaylist = %q, want Workout", m.openPlaylist)
+	}
+	if m.filter != "" {
+		t.Errorf("filter = %q, want cleared on opening a playlist", m.filter)
+	}
+}
+
+func TestModel_PlaylistTracks_FilterRemovesOriginalTrack(t *testing.T) {
+	r := &recordingRunner{}
+	m := New(musicapp.NewClient(r))
+	m.tab = tabPlaylists
+	m.playlistsLoaded = true
+	m.openPlaylist = "Chill"
+	m.playlistTracks = []musicapp.LibraryTrack{{Name: "A"}, {Name: "B"}, {Name: "C"}}
+
+	m = updateModel(t, m, key("/"))
+	m = updateModel(t, m, key("c"))
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = updateModel(t, m, key("d"))
+	_, cmd := m.Update(key("y"))
+	if cmd == nil {
+		t.Fatal("expected a remove command")
+	}
+	cmd()
+	if len(r.scripts) == 0 || !strings.Contains(r.scripts[0], "delete (track 3 of") {
+		t.Errorf("scripts = %q, want first to remove the original track 3", r.scripts)
+	}
+}
