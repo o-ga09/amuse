@@ -1,5 +1,23 @@
 # Changelog
 
+## [v0.0.3](https://github.com/o-ga09/amuse/compare/v0.0.2...v0.0.3) - 2026-10-18
+
+### New Features 🎉
+- feat(tui): add incremental filter to playlist and song lists by @o-ga09 in https://github.com/o-ga09/amuse/pull/44
+### Dependency Updates ⬆️
+- chore(deps): Bump the dependencies group with 2 updates by @dependabot[bot] in https://github.com/o-ga09/amuse/pull/35
+- chore(deps): Bump k1LoW/octocov-action from 1.5.1 to 1.5.2 in the dependencies group by @dependabot[bot] in https://github.com/o-ga09/amuse/pull/36
+- chore(deps): Bump github/codeql-action/upload-sarif from 4.37.3 to 4.37.6 in the dependencies group by @dependabot[bot] in https://github.com/o-ga09/amuse/pull/37
+- chore(deps): Bump github/codeql-action/upload-sarif from 4.37.6 to 4.37.7 in the dependencies group by @dependabot[bot] in https://github.com/o-ga09/amuse/pull/38
+- chore(deps): Bump the dependencies group with 3 updates by @dependabot[bot] in https://github.com/o-ga09/amuse/pull/39
+- chore(deps): Bump the dependencies group with 2 updates by @dependabot[bot] in https://github.com/o-ga09/amuse/pull/40
+- chore(deps): Bump the dependencies group with 2 updates by @dependabot[bot] in https://github.com/o-ga09/amuse/pull/41
+- chore(deps): Bump the dependencies group with 2 updates by @dependabot[bot] in https://github.com/o-ga09/amuse/pull/42
+- chore(deps): Bump Songmu/tagpr from 1.21.1 to 1.21.2 in the dependencies group by @dependabot[bot] in https://github.com/o-ga09/amuse/pull/43
+- chore(deps): Bump the dependencies group with 2 updates by @dependabot[bot] in https://github.com/o-ga09/amuse/pull/45
+### Other Changes
+- [fix] プレイリスト内トラック再生後に次曲へ進まない不具合を修正 by @o-ga09 in https://github.com/o-ga09/amuse/pull/33
+
 ## [v0.0.2](https://github.com/o-ga09/amuse/compare/v0.0.1...v0.0.2) - 2026-07-20
 
 ### New Features 🎉
