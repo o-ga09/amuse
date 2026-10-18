@@ -703,7 +703,7 @@ func filterTrackIndexes(tracks []musicapp.LibraryTrack, filter string) []int {
 func filterIndexes(n int, filter string, text func(i int) string) []int {
 	needle := strings.ToLower(filter)
 	idx := make([]int, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if strings.Contains(strings.ToLower(text(i)), needle) {
 			idx = append(idx, i)
 		}
