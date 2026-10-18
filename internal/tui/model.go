@@ -71,6 +71,7 @@ const (
 	modeConfirmDeletePlaylist
 	modeConfirmRemoveTrack
 	modeAddToPlaylist
+	modeFilter // typing a list filter; not a playlist-management overlay
 )
 
 func (t tab) title() string {
@@ -195,6 +196,11 @@ type Model struct {
 	confirmTarget string // playlist name shown in the delete-playlist confirm
 	addSongIndex  int    // library index of the song being added to a playlist
 	pickerCursor  int    // cursor within the add-to-playlist target picker
+
+	// filter narrows the active list (playlists, a playlist's tracks, or songs)
+	// to rows containing it. Cursors index the filtered rows, so actions map
+	// back to library positions through the visible* helpers.
+	filter string
 }
 
 // New creates a Model that controls Music.app through client.
@@ -324,12 +330,14 @@ func (m Model) renderMode(b *strings.Builder) {
 		fmt.Fprintf(b, "Delete playlist %q? (y/n)\n", m.confirmTarget)
 	case modeConfirmRemoveTrack:
 		name := ""
-		if m.trackCursor < len(m.playlistTracks) {
-			name = m.playlistTracks[m.trackCursor].Name
+		if i, ok := pick(m.visibleTracks(), m.trackCursor); ok {
+			name = m.playlistTracks[i].Name
 		}
 		fmt.Fprintf(b, "Remove %q from %q? (y/n)\n", name, m.openPlaylist)
 	case modeAddToPlaylist:
 		m.renderPicker(b)
+	case modeFilter:
+		fmt.Fprintf(b, "%s %s\n", titleStyle.Render("Filter:"), m.filter+"▌")
 	}
 }
 
@@ -395,20 +403,23 @@ func (m Model) renderPlaylistsTab(b *strings.Builder) {
 			b.WriteString("Loading tracks…\n")
 			return
 		}
-		renderTrackList(b, m.playlistTracks, m.trackCursor, "No tracks in this playlist.")
+		m.renderFilterStatus(b)
+		renderTrackList(b, m.playlistTracks, m.visibleTracks(), m.trackCursor, m.emptyMsg("No tracks in this playlist."))
 		return
 	}
 	if !m.playlistsLoaded {
 		b.WriteString("Loading playlists…\n")
 		return
 	}
-	if len(m.playlists) == 0 {
-		b.WriteString("No playlists found.\n")
+	m.renderFilterStatus(b)
+	vis := m.visiblePlaylists()
+	if len(vis) == 0 {
+		b.WriteString(m.emptyMsg("No playlists found.") + "\n")
 		return
 	}
-	start, end := listWindow(m.playlistCursor, len(m.playlists))
+	start, end := listWindow(m.playlistCursor, len(vis))
 	for i := start; i < end; i++ {
-		renderRow(b, m.playlists[i], i == m.playlistCursor)
+		renderRow(b, m.playlists[vis[i]], i == m.playlistCursor)
 	}
 }
 
@@ -421,19 +432,38 @@ func (m Model) renderSongsTab(b *strings.Builder) {
 		b.WriteString("Loading songs…\n")
 		return
 	}
-	renderTrackList(b, m.songs, m.songCursor, "No songs found.")
+	m.renderFilterStatus(b)
+	renderTrackList(b, m.songs, m.visibleSongs(), m.songCursor, m.emptyMsg("No songs found."))
 }
 
-// renderTrackList renders a scrollable list of library tracks with the cursor
-// row highlighted, or emptyMsg when there are none.
-func renderTrackList(b *strings.Builder, tracks []musicapp.LibraryTrack, cursor int, emptyMsg string) {
-	if len(tracks) == 0 {
+// renderFilterStatus shows the committed filter above its list. While the
+// filter is being typed the prompt is drawn by renderMode instead.
+func (m Model) renderFilterStatus(b *strings.Builder) {
+	if m.filter != "" && m.mode == modeNone {
+		b.WriteString(dimStyle.Render("filter: "+m.filter) + "\n")
+	}
+}
+
+// emptyMsg is the empty-list message, swapped for "No matches." when a filter
+// (rather than an empty library) is why nothing is shown.
+func (m Model) emptyMsg(msg string) string {
+	if m.filter != "" {
+		return "No matches."
+	}
+	return msg
+}
+
+// renderTrackList renders the visible rows of tracks as a scrollable list with
+// the cursor row highlighted, or emptyMsg when there are none.
+func renderTrackList(b *strings.Builder, tracks []musicapp.LibraryTrack, vis []int, cursor int, emptyMsg string) {
+	if len(vis) == 0 {
 		b.WriteString(emptyMsg + "\n")
 		return
 	}
-	start, end := listWindow(cursor, len(tracks))
+	start, end := listWindow(cursor, len(vis))
 	for i := start; i < end; i++ {
-		renderRow(b, tracks[i].Name+" — "+tracks[i].Artist, i == cursor)
+		t := tracks[vis[i]]
+		renderRow(b, t.Name+" — "+t.Artist, i == cursor)
 	}
 }
 
@@ -455,15 +485,17 @@ func (m Model) helpLine() string {
 		return "y: confirm  n/esc: cancel"
 	case modeAddToPlaylist:
 		return "↑↓: move  enter: add  esc: cancel"
+	case modeFilter:
+		return "type to filter  ↑↓: move  enter: keep  esc: clear"
 	}
 	switch m.tab {
 	case tabPlaylists:
 		if m.openPlaylist != "" {
-			return "↑↓: move  enter: play  d: remove  esc: back  tab: switch tab  q: quit"
+			return "↑↓: move  enter: play  /: filter  d: remove  esc: back  tab: switch tab  q: quit"
 		}
-		return "↑↓: move  enter: open  a: new  d: delete  r: reload  tab: switch tab  q: quit"
+		return "↑↓: move  enter: open  /: filter  a: new  d: delete  r: reload  tab: switch tab  q: quit"
 	case tabSongs:
-		return "↑↓: move  enter: play  a: add to playlist  r: reload  tab: switch tab  q: quit"
+		return "↑↓: move  enter: play  /: filter  a: add to playlist  r: reload  tab: switch tab  q: quit"
 	default:
 		return "space: play/pause  n: next  p: prev  s: shuffle  c: repeat  +/-: volume  tab: switch tab  q: quit"
 	}
@@ -549,6 +581,7 @@ func (m Model) transportCmd(msg tea.KeyMsg) (tea.Cmd, bool) {
 func (m Model) switchTab(dir int) (tea.Model, tea.Cmd) {
 	m.tab = tab((int(m.tab) + dir + int(tabCount)) % int(tabCount))
 	m.listErr = nil
+	m.clearFilter()
 	return m, m.ensureTabLoaded()
 }
 
@@ -579,8 +612,112 @@ func (m Model) handleModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleConfirmRemoveTrackKey(msg)
 	case modeAddToPlaylist:
 		return m.handleAddToPlaylistKey(msg)
+	case modeFilter:
+		return m.handleFilterKey(msg)
 	}
 	return m, nil
+}
+
+// handleFilterKey edits the list filter live. Enter keeps it applied and
+// returns to browsing; esc discards it.
+func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc, tea.KeyCtrlC:
+		m.clearFilter()
+		m.mode = modeNone
+	case tea.KeyEnter:
+		m.mode = modeNone
+	case tea.KeyUp:
+		m.moveListCursor(-1)
+	case tea.KeyDown:
+		m.moveListCursor(1)
+	case tea.KeyBackspace:
+		m.filter = trimLastRune(m.filter)
+		m.resetListCursor()
+	case tea.KeySpace:
+		m.filter += " "
+		m.resetListCursor()
+	case tea.KeyRunes:
+		m.filter += string(msg.Runes)
+		m.resetListCursor()
+	}
+	return m, nil
+}
+
+// startFilter opens the filter prompt, keeping any filter already applied.
+func (m *Model) startFilter() {
+	m.mode = modeFilter
+}
+
+func (m *Model) clearFilter() {
+	m.filter = ""
+	m.resetListCursor()
+}
+
+// resetListCursor moves the active list's cursor to the top, since the rows
+// under it change whenever the filter does.
+func (m *Model) resetListCursor() {
+	switch {
+	case m.tab == tabSongs:
+		m.songCursor = 0
+	case m.tab == tabPlaylists && m.openPlaylist != "":
+		m.trackCursor = 0
+	case m.tab == tabPlaylists:
+		m.playlistCursor = 0
+	}
+}
+
+func (m *Model) moveListCursor(delta int) {
+	switch {
+	case m.tab == tabSongs:
+		m.songCursor = moveCursor(m.songCursor, delta, len(m.visibleSongs()))
+	case m.tab == tabPlaylists && m.openPlaylist != "":
+		m.trackCursor = moveCursor(m.trackCursor, delta, len(m.visibleTracks()))
+	case m.tab == tabPlaylists:
+		m.playlistCursor = moveCursor(m.playlistCursor, delta, len(m.visiblePlaylists()))
+	}
+}
+
+// visiblePlaylists, visibleTracks and visibleSongs return the indexes into
+// their full lists that match the active filter.
+func (m Model) visiblePlaylists() []int {
+	return filterIndexes(len(m.playlists), m.filter, func(i int) string { return m.playlists[i] })
+}
+
+func (m Model) visibleTracks() []int {
+	return filterTrackIndexes(m.playlistTracks, m.filter)
+}
+
+func (m Model) visibleSongs() []int {
+	return filterTrackIndexes(m.songs, m.filter)
+}
+
+func filterTrackIndexes(tracks []musicapp.LibraryTrack, filter string) []int {
+	return filterIndexes(len(tracks), filter, func(i int) string {
+		return tracks[i].Name + " " + tracks[i].Artist + " " + tracks[i].Album
+	})
+}
+
+// filterIndexes returns, in order, the indexes of the n items whose text
+// contains filter case-insensitively. An empty filter matches every item.
+func filterIndexes(n int, filter string, text func(i int) string) []int {
+	needle := strings.ToLower(filter)
+	idx := make([]int, 0, n)
+	for i := range n {
+		if strings.Contains(strings.ToLower(text(i)), needle) {
+			idx = append(idx, i)
+		}
+	}
+	return idx
+}
+
+// pick maps a cursor position over the visible rows back to its index in the
+// full list, reporting false when the cursor isn't on a row.
+func pick(vis []int, cursor int) (int, bool) {
+	if cursor < 0 || cursor >= len(vis) {
+		return 0, false
+	}
+	return vis[cursor], true
 }
 
 func (m Model) handleCreatePlaylistKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -623,8 +760,12 @@ func (m Model) handleConfirmDeleteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleConfirmRemoveTrackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
-		playlist, index := m.openPlaylist, m.trackCursor
+		index, ok := pick(m.visibleTracks(), m.trackCursor)
+		playlist := m.openPlaylist
 		m.mode = modeNone
+		if !ok {
+			return m, nil
+		}
 		return m, removePlaylistTrack(m.client, playlist, index)
 	case "n", "N", "esc":
 		m.mode = modeNone
@@ -654,23 +795,27 @@ func (m Model) handleAddToPlaylistKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handlePlaylistsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Drilled into a playlist: navigate and play its tracks.
 	if m.openPlaylist != "" {
+		vis := m.visibleTracks()
 		switch msg.String() {
 		case "up", "k":
-			m.trackCursor = moveCursor(m.trackCursor, -1, len(m.playlistTracks))
+			m.trackCursor = moveCursor(m.trackCursor, -1, len(vis))
 		case "down", "j":
-			m.trackCursor = moveCursor(m.trackCursor, 1, len(m.playlistTracks))
+			m.trackCursor = moveCursor(m.trackCursor, 1, len(vis))
+		case "/":
+			m.startFilter()
 		case "enter":
-			if len(m.playlistTracks) == 0 {
+			index, ok := pick(vis, m.trackCursor)
+			if !ok {
 				return m, nil
 			}
-			name, index := m.openPlaylist, m.trackCursor
+			name := m.openPlaylist
 			// PlayPlaylistTrack walks the playlist to the chosen track, which
 			// can outlast actionTimeout for tracks deep in a long playlist.
 			return m, doActionTimeout(listTimeout, func(ctx context.Context) error {
 				return m.client.PlayPlaylistTrack(ctx, name, index)
 			})
 		case "d":
-			if len(m.playlistTracks) == 0 {
+			if _, ok := pick(vis, m.trackCursor); !ok {
 				return m, nil
 			}
 			m.mode = modeConfirmRemoveTrack
@@ -678,32 +823,41 @@ func (m Model) handlePlaylistsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.openPlaylist = ""
 			m.playlistTracks = nil
 			m.trackCursor = 0
+			m.clearFilter()
 		}
 		return m, nil
 	}
 
+	vis := m.visiblePlaylists()
 	switch msg.String() {
 	case "up", "k":
-		m.playlistCursor = moveCursor(m.playlistCursor, -1, len(m.playlists))
+		m.playlistCursor = moveCursor(m.playlistCursor, -1, len(vis))
 	case "down", "j":
-		m.playlistCursor = moveCursor(m.playlistCursor, 1, len(m.playlists))
+		m.playlistCursor = moveCursor(m.playlistCursor, 1, len(vis))
+	case "/":
+		m.startFilter()
+	case "esc":
+		m.clearFilter()
 	case "enter", "right", "l":
-		if len(m.playlists) == 0 {
+		i, ok := pick(vis, m.playlistCursor)
+		if !ok {
 			return m, nil
 		}
-		m.openPlaylist = m.playlists[m.playlistCursor]
+		m.openPlaylist = m.playlists[i]
 		m.playlistTracks = nil
 		m.trackCursor = 0
+		m.clearFilter()
 		return m, fetchPlaylistTracks(m.client, m.openPlaylist)
 	case "a":
 		m.mode = modeCreatePlaylist
 		m.nameInput = ""
 	case "d":
-		if len(m.playlists) == 0 {
+		i, ok := pick(vis, m.playlistCursor)
+		if !ok {
 			return m, nil
 		}
 		m.mode = modeConfirmDeletePlaylist
-		m.confirmTarget = m.playlists[m.playlistCursor]
+		m.confirmTarget = m.playlists[i]
 	case "r":
 		m.playlistsLoaded = false
 		return m, fetchPlaylists(m.client)
@@ -712,25 +866,31 @@ func (m Model) handlePlaylistsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleSongsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	vis := m.visibleSongs()
 	switch msg.String() {
 	case "up", "k":
-		m.songCursor = moveCursor(m.songCursor, -1, len(m.songs))
+		m.songCursor = moveCursor(m.songCursor, -1, len(vis))
 	case "down", "j":
-		m.songCursor = moveCursor(m.songCursor, 1, len(m.songs))
+		m.songCursor = moveCursor(m.songCursor, 1, len(vis))
+	case "/":
+		m.startFilter()
+	case "esc":
+		m.clearFilter()
 	case "enter":
-		if len(m.songs) == 0 {
+		index, ok := pick(vis, m.songCursor)
+		if !ok {
 			return m, nil
 		}
-		index := m.songCursor
 		return m, doAction(func(ctx context.Context) error {
 			return m.client.PlaySong(ctx, index)
 		})
 	case "a":
-		if len(m.songs) == 0 {
+		index, ok := pick(vis, m.songCursor)
+		if !ok {
 			return m, nil
 		}
 		m.mode = modeAddToPlaylist
-		m.addSongIndex = m.songCursor
+		m.addSongIndex = index
 		m.pickerCursor = 0
 		// The picker needs the playlist list; load it lazily if the Playlists
 		// tab hasn't been visited yet.
